@@ -4,6 +4,7 @@
   "description": "Claude Code Smart Notification System - Send desktop notifications when Claude completes tasks or needs input",
   "main": "hook-notify.js",
   "scripts": {
+    "setup": "node setup.js",
     "config": "node claude-remote-config.js",
     "daemon:start": "node claude-remote.js daemon start",
     "daemon:stop": "node claude-remote.js daemon stop",

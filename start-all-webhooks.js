@@ -70,6 +70,7 @@ if (processes.length === 0) {
     console.log('   - Set TELEGRAM_ENABLED=true and configure TELEGRAM_BOT_TOKEN');
     console.log('   - Set LINE_ENABLED=true and configure LINE_CHANNEL_ACCESS_TOKEN');
     console.log('   - Set EMAIL_ENABLED=true and configure SMTP_USER');
+    console.log('\n   Tip: run `npm run setup` for an interactive configuration wizard.');
     process.exit(1);
 }
 

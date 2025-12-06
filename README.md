@@ -82,8 +82,8 @@ Control [Claude Code](https://claude.ai/code) remotely via multiple messaging pl
 
 **System Requirements:**
 - Node.js >= 14.0.0
-- **tmux** (required for command injection)
-- Active tmux session with Claude Code running
+- For default PTY mode: no tmux required (recommended for本地直接用)
+- For tmux mode: tmux + an active session with Claude Code running
 
 ### 2. Install
 
@@ -93,7 +93,18 @@ cd Claude-Code-Remote
 npm install
 ```
 
-### 3. Choose Your Platform
+### 3. Interactive Setup (Recommended)
+
+```bash
+npm run setup
+```
+
+- 引导式填写 Email / Telegram / LINE 配置，生成 `.env`
+- 自动把 Claude hooks 合并进 `~/.claude/settings.json`
+- 可随时重跑更新密钥/切换渠道
+- 如需手动配置或离线编辑 `.env`，见下方“手动配置”
+
+### 4. 手动配置（可选，跳过如果已运行 `npm run setup`）
 
 #### Option A: Configure Email (Recommended for Beginners)
 
@@ -167,7 +178,7 @@ LINE_CHANNEL_SECRET=your-secret
 LINE_USER_ID=your-user-id
 ```
 
-### 4. Configure Claude Code Hooks
+#### Configure Claude Code Hooks（仅在跳过 `npm run setup` 时需要）
 
 Create hooks configuration file:
 
@@ -204,24 +215,18 @@ export CLAUDE_HOOKS_CONFIG=/your/path/to/Claude-Code-Remote/claude-hooks.json
 
 > **Note**: Subagent notifications are disabled by default. To enable them, set `enableSubagentNotifications: true` in your config. See [Subagent Notifications Guide](./docs/SUBAGENT_NOTIFICATIONS.md) for details.
 
-### 5. Start tmux Session with Claude Code
+### 5. 启动 Claude（按你的注入模式选择）
 
-**IMPORTANT**: Claude Code Remote requires Claude to run in a tmux session for command injection to work.
+- **默认 PTY 模式（无需 tmux）**：直接在终端运行 `claude-code --config /path/to/your/claude/settings.json`
+- **如果你选择 tmux 模式**：
+  ```bash
+  tmux new-session -d -s claude-session
+  tmux attach-session -t claude-session
+  claude-code --config /path/to/your/claude/settings.json
+  ```
+  > Detach: Ctrl+B 然后 D
 
-```bash
-# Start a new tmux session
-tmux new-session -d -s claude-session
-
-# Attach to the session
-tmux attach-session -t claude-session
-
-# Inside tmux, start Claude Code with hooks enabled
-claude-code --config /path/to/your/claude/settings.json
-
-# Detach from tmux (Ctrl+B, then D) to leave Claude running in background
-```
-
-> **Note**: Make sure your `~/.claude/settings.json` or project-specific config includes the hooks configuration from Step 4.
+> **Note**: Interactive setup 已合并 hooks 到 `~/.claude/settings.json`。若跳过，请确保手动配置 hooks。
 
 ### 6. Start Services
 
@@ -303,6 +308,10 @@ Reply to notification with: Your command here
 (Token automatically extracted from conversation context)
 ```
 
+**Local fallback (no tmux)**  
+- 默认 `INJECTION_MODE=pty`：命令通过 PTY/智能粘贴注入，不依赖 tmux  
+- macOS 可自动复制/粘贴到 Claude/终端；若自动注入失败，会把命令复制到剪贴板并弹出提醒
+
 ### Advanced Configuration
 
 **Email Notification Options**
@@ -353,6 +362,11 @@ Reply to notification with: Your command here
 - **Mobile Development**: Send commands from phone via Telegram
 
 ## 🔧 Commands
+
+### Setup
+```bash
+npm run setup   # Interactive wizard to create .env and merge hooks into ~/.claude/settings.json
+```
 
 ### Testing & Diagnostics
 ```bash

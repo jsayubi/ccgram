@@ -214,11 +214,18 @@ function sendTelegram(text) {
 function readStdin() {
   return new Promise((resolve) => {
     let data = '';
+    let resolved = false;
     process.stdin.setEncoding('utf8');
     process.stdin.on('data', (chunk) => { data += chunk; });
-    process.stdin.on('end', () => resolve(data));
+    process.stdin.on('end', () => {
+      if (!resolved) { resolved = true; resolve(data); }
+    });
     setTimeout(() => {
-      if (!data) resolve('{}');
+      if (!resolved) {
+        resolved = true;
+        process.stdin.destroy();
+        resolve(data || '{}');
+      }
     }, 500);
   });
 }

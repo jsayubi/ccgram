@@ -263,31 +263,28 @@ async function processCallbackQuery(query) {
   const [type, promptId, action] = parts;
 
   if (type === 'perm') {
-    // Permission response: allow / deny / always
-    const responseData = { action: action === 'deny' ? 'deny' : 'allow' };
-    if (action === 'always') {
-      responseData.alwaysAllow = true;
+    // Permission response: write response file for the polling hook
+    const pending = readPending(promptId);
+
+    if (!pending) {
+      await answerCallbackQuery(query.id, 'Session not found');
+      return;
     }
-    writeResponse(promptId, responseData);
 
     const label = action === 'allow' ? '✅ Allowed' : action === 'always' ? '🔓 Always Allowed' : '❌ Denied';
-    await answerCallbackQuery(query.id, label);
 
-    // Edit message to show result and remove buttons
+    // Write response file — the permission-hook.js is polling for this
     try {
-      await editMessageText(chatId, messageId, `${originalText}\n\n— ${label}`);
+      writeResponse(promptId, { action });
+      logger.info(`Wrote permission response for promptId=${promptId}: action=${action}`);
+      await answerCallbackQuery(query.id, label);
     } catch (err) {
-      logger.error(`Failed to edit message: ${err.message}`);
+      logger.error(`Failed to write permission response: ${err.message}`);
+      await answerCallbackQuery(query.id, 'Failed to save response');
+      return;
     }
 
-  } else if (type === 'plan') {
-    // Plan response: approve / reject
-    const responseData = { action: action === 'approve' ? 'allow' : 'deny' };
-    writeResponse(promptId, responseData);
-
-    const label = action === 'approve' ? '✅ Approved' : '❌ Rejected';
-    await answerCallbackQuery(query.id, label);
-
+    // Edit message to show result and remove buttons
     try {
       await editMessageText(chatId, messageId, `${originalText}\n\n— ${label}`);
     } catch (err) {

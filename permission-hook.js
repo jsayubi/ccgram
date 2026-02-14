@@ -3,34 +3,39 @@
 /**
  * Permission Hook — Called by Claude Code's PermissionRequest hook.
  *
- * Handles both tool permission requests and plan approval (ExitPlanMode).
- * Sends a Telegram message with inline keyboard buttons, then polls
- * for a response file written by the bot's callback query handler.
+ * Blocking approach:
+ *   1. Sends a Telegram message with inline keyboard buttons
+ *   2. Polls for a response file written by the bot's callback handler
+ *   3. Outputs the permission decision via stdout
+ *   4. Exits cleanly
  *
  * Stdin JSON: { tool_name, tool_input, cwd, session_id, hook_event_name }
- * Stdout JSON: { "hookSpecificOutput": { "hookEventName": "PermissionRequest", "permissionDecision": "allow"|"deny", "alwaysAllow"?: true } }
+ * Stdout JSON: { hookSpecificOutput: { hookEventName, decision: { behavior } } }
  */
 
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env'), quiet: true });
 
+const fs = require('fs');
 const https = require('https');
 const { execSync } = require('child_process');
 const { extractWorkspaceName } = require('./workspace-router');
-const {
-  generatePromptId,
-  writePending,
-  readResponse,
-  cleanPrompt,
-} = require('./prompt-bridge');
+const { generatePromptId, writePending, cleanPrompt, PROMPTS_DIR } = require('./prompt-bridge');
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
 const POLL_INTERVAL_MS = 500;
-const POLL_TIMEOUT_MS = 120000; // 120 seconds
+const POLL_TIMEOUT_MS = 90000; // 90 seconds max wait
 
-let outputSent = false; // Guard against double stdout output (e.g. SIGTERM race)
+// Debug logging to file (since stdout is for Claude Code)
+const LOG_FILE = path.join(__dirname, 'logs', 'permission-hook-debug.log');
+function debugLog(msg) {
+  const ts = new Date().toISOString();
+  try {
+    fs.appendFileSync(LOG_FILE, `${ts} ${msg}\n`);
+  } catch {}
+}
 
 // ── Main ────────────────────────────────────────────────────────
 
@@ -40,8 +45,7 @@ async function main() {
   try {
     payload = JSON.parse(raw);
   } catch {
-    outputDeny();
-    return;
+    return; // Can't parse — exit without decision
   }
 
   const toolName = payload.tool_name || 'Unknown';
@@ -49,6 +53,7 @@ async function main() {
   const cwd = payload.cwd || process.cwd();
   const workspace = extractWorkspaceName(cwd);
   const promptId = generatePromptId();
+  const tmuxSession = detectTmuxSession();
 
   const isPlan = toolName === 'ExitPlanMode';
 
@@ -59,7 +64,6 @@ async function main() {
   if (isPlan) {
     // Plan approval — try to capture plan content from tmux
     let planContent = '';
-    const tmuxSession = detectTmuxSession();
     if (tmuxSession) {
       try {
         const paneOutput = execSync(
@@ -81,8 +85,8 @@ async function main() {
     keyboard = {
       inline_keyboard: [
         [
-          { text: '✅ Approve', callback_data: `plan:${promptId}:approve` },
-          { text: '❌ Reject', callback_data: `plan:${promptId}:reject` },
+          { text: '✅ Approve', callback_data: `perm:${promptId}:allow` },
+          { text: '❌ Reject', callback_data: `perm:${promptId}:deny` },
         ],
       ],
     };
@@ -109,101 +113,93 @@ async function main() {
     };
   }
 
-  // Write pending file for bot callback routing
+  // Write pending file so bot callback handler can write the response
   writePending(promptId, {
     type: isPlan ? 'plan' : 'permission',
     workspace,
     toolName,
     toolInput,
-    tmuxSession: detectTmuxSession(),
+    tmuxSession,
   });
 
   // Send Telegram message with inline keyboard
+  debugLog(`[${promptId}] Sending Telegram message for ${toolName}...`);
   try {
     await sendTelegramWithKeyboard(messageText, keyboard);
+    debugLog(`[${promptId}] Telegram message sent`);
   } catch (err) {
+    debugLog(`[${promptId}] Telegram send failed: ${err.message}`);
     process.stderr.write(`[permission-hook] Telegram send failed: ${err.message}\n`);
-    outputDeny();
     cleanPrompt(promptId);
-    return;
+    return; // Can't notify — exit without decision
   }
 
-  // Poll for response
+  // Poll for response file
+  debugLog(`[${promptId}] Starting to poll for response...`);
   const response = await pollForResponse(promptId);
 
   if (response) {
-    if (response.action === 'allow') {
-      outputAllow(response.alwaysAllow || false);
+    const action = response.action || 'allow';
+    debugLog(`[${promptId}] Got response: action=${action}`);
+    let decision;
+    if (action === 'deny') {
+      decision = 'deny';
+    } else if (action === 'always') {
+      decision = 'allow';
     } else {
-      outputDeny();
+      decision = 'allow';
     }
+
+    const output = JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: 'PermissionRequest',
+        decision: {
+          behavior: decision,
+        },
+      },
+    });
+
+    debugLog(`[${promptId}] Writing to stdout: ${output}`);
+    process.stdout.write(output + '\n');
+    debugLog(`[${promptId}] Stdout written`);
   } else {
-    // Timeout — deny and notify
-    outputDeny();
-    try {
-      await sendTelegram(`⏰ *Timed out* — ${escapeMarkdown(workspace)}\n\nPermission denied automatically after timeout.`);
-    } catch {}
+    debugLog(`[${promptId}] No response received (timed out or error)`);
   }
 
+  // Clean up
   cleanPrompt(promptId);
+  debugLog(`[${promptId}] Cleaned up, letting process exit naturally`);
 }
 
 // ── Polling ─────────────────────────────────────────────────────
 
 function pollForResponse(promptId) {
   return new Promise((resolve) => {
+    const responseFile = path.join(PROMPTS_DIR, `response-${promptId}.json`);
     const startTime = Date.now();
 
     const interval = setInterval(() => {
-      const response = readResponse(promptId);
-      if (response) {
+      // Check timeout
+      if (Date.now() - startTime > POLL_TIMEOUT_MS) {
         clearInterval(interval);
-        resolve(response);
+        process.stderr.write(`[permission-hook] Timed out waiting for response\n`);
+        resolve(null);
         return;
       }
 
-      if (Date.now() - startTime >= POLL_TIMEOUT_MS) {
-        clearInterval(interval);
-        resolve(null);
+      // Check for response file
+      try {
+        if (fs.existsSync(responseFile)) {
+          const raw = fs.readFileSync(responseFile, 'utf8');
+          const data = JSON.parse(raw);
+          clearInterval(interval);
+          resolve(data);
+        }
+      } catch {
+        // File not ready yet or parse error — keep polling
       }
     }, POLL_INTERVAL_MS);
-
-    // Handle SIGTERM gracefully
-    process.on('SIGTERM', () => {
-      clearInterval(interval);
-      cleanPrompt(promptId);
-      outputDeny();
-      process.exit(0);
-    });
   });
-}
-
-// ── Output ──────────────────────────────────────────────────────
-
-function outputAllow(alwaysAllow) {
-  if (outputSent) return;
-  outputSent = true;
-  const decision = {
-    hookSpecificOutput: {
-      hookEventName: 'PermissionRequest',
-      permissionDecision: 'allow',
-    },
-  };
-  if (alwaysAllow) {
-    decision.hookSpecificOutput.alwaysAllow = true;
-  }
-  process.stdout.write(JSON.stringify(decision));
-}
-
-function outputDeny() {
-  if (outputSent) return;
-  outputSent = true;
-  process.stdout.write(JSON.stringify({
-    hookSpecificOutput: {
-      hookEventName: 'PermissionRequest',
-      permissionDecision: 'deny',
-    },
-  }));
 }
 
 // ── Telegram ────────────────────────────────────────────────────
@@ -215,48 +211,6 @@ function sendTelegramWithKeyboard(text, replyMarkup) {
       text,
       parse_mode: 'Markdown',
       reply_markup: replyMarkup,
-    });
-
-    const options = {
-      hostname: 'api.telegram.org',
-      path: `/bot${BOT_TOKEN}/sendMessage`,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(body),
-      },
-      timeout: 10000,
-    };
-
-    const req = https.request(options, (res) => {
-      let data = '';
-      res.on('data', (chunk) => { data += chunk; });
-      res.on('end', () => {
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          resolve(data);
-        } else {
-          reject(new Error(`Telegram API ${res.statusCode}: ${data}`));
-        }
-      });
-    });
-
-    req.on('error', reject);
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error('Telegram request timed out'));
-    });
-
-    req.write(body);
-    req.end();
-  });
-}
-
-function sendTelegram(text) {
-  return new Promise((resolve, reject) => {
-    const body = JSON.stringify({
-      chat_id: CHAT_ID,
-      text,
-      parse_mode: 'Markdown',
     });
 
     const options = {
@@ -298,11 +252,18 @@ function sendTelegram(text) {
 function readStdin() {
   return new Promise((resolve) => {
     let data = '';
+    let resolved = false;
     process.stdin.setEncoding('utf8');
     process.stdin.on('data', (chunk) => { data += chunk; });
-    process.stdin.on('end', () => resolve(data));
+    process.stdin.on('end', () => {
+      if (!resolved) { resolved = true; resolve(data); }
+    });
     setTimeout(() => {
-      if (!data) resolve('{}');
+      if (!resolved) {
+        resolved = true;
+        process.stdin.destroy();
+        resolve(data || '{}');
+      }
     }, 500);
   });
 }
@@ -333,7 +294,6 @@ function formatToolDescription(toolName, toolInput) {
   if (toolName === 'Read' && toolInput.file_path) {
     return `*File:* \`${escapeMarkdown(toolInput.file_path)}\``;
   }
-  // Generic: show first key-value pair
   const keys = Object.keys(toolInput);
   if (keys.length > 0) {
     const key = keys[0];
@@ -345,15 +305,12 @@ function formatToolDescription(toolName, toolInput) {
 
 function cleanPlanOutput(raw) {
   let lines = raw.split('\n');
-  // Strip ANSI codes
   lines = lines.map(l => l
     .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')
     .replace(/\x1B\][^\x07]*\x07/g, '')
   );
-  // Remove empty trailing lines
   while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
   while (lines.length && !lines[0].trim()) lines.shift();
-  // Filter noise
   lines = lines.filter(l => {
     const t = l.trim();
     if (!t) return true;
@@ -373,6 +330,4 @@ function escapeMarkdown(text) {
 
 main().catch((err) => {
   process.stderr.write(`[permission-hook] Fatal: ${err.message}\n`);
-  outputDeny();
-  process.exit(1);
 });

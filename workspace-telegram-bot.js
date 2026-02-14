@@ -9,6 +9,7 @@
  *   /cmd <TOKEN> <command>   Token-based fallback for direct session access
  *   /help                    Show available commands
  *   /status <workspace>      Show tmux pane output for a workspace
+ *   /compact [workspace]     Compact context in a workspace session
  */
 
 const path = require('path');
@@ -138,6 +139,7 @@ async function handleHelp() {
     '`/use <workspace>` — Set default workspace',
     '`/use` — Show current default',
     '`/use clear` — Clear default',
+    '`/compact [workspace]` — Compact context in workspace',
     '`/sessions` — List active sessions',
     '`/status <workspace>` — Show tmux output',
     '`/cmd <TOKEN> <command>` — Token-based fallback',
@@ -274,6 +276,98 @@ async function handleUse(arg) {
   await sendMessage(`Default workspace set to *${escapeMarkdown(fullName)}*. Plain text messages will route here.`);
 }
 
+async function handleCompact(workspaceArg) {
+  let workspace;
+  if (workspaceArg) {
+    workspace = workspaceArg;
+  } else {
+    const defaultWs = getDefaultWorkspace();
+    if (defaultWs) {
+      workspace = defaultWs;
+    } else {
+      await sendMessage('Usage: `/compact <workspace>` or set a default with `/use`.');
+      return;
+    }
+  }
+
+  const resolved = resolveWorkspace(workspace);
+
+  if (resolved.type === 'none') {
+    await sendMessage(`No active session for *${escapeMarkdown(workspace)}*. Use /sessions to see available workspaces.`);
+    return;
+  }
+
+  if (resolved.type === 'ambiguous') {
+    const names = resolved.matches.map(m => `\`${escapeMarkdown(m.workspace)}\``).join(', ');
+    await sendMessage(`Multiple matches: ${names}. Be more specific.`);
+    return;
+  }
+
+  const tmuxName = resolved.match.session.tmuxSession;
+
+  // Inject /compact into tmux
+  const injected = await injectAndRespond(resolved.match.session, '/compact', resolved.workspace);
+  if (!injected) return;
+
+  // Two-phase polling to detect compact completion:
+  // Phase 1: Wait for "Compacting" to appear (command started processing)
+  // Phase 2: Wait for "Compacting" to disappear (command finished)
+
+  let started = false;
+
+  // Phase 1: Wait up to 10s for compact to start
+  for (let i = 0; i < 5; i++) {
+    await sleep(2000);
+    try {
+      const output = await capturePane(tmuxName);
+      if (output.includes('Compacting')) {
+        started = true;
+        break;
+      }
+    } catch {
+      break;
+    }
+  }
+
+  if (!started) {
+    // Command may have finished very quickly or failed to start
+    try {
+      const output = await capturePane(tmuxName);
+      if (output.includes('Compacted')) {
+        const lines = output.trim().split('\n').slice(-10).join('\n');
+        await sendMessage(`\u2705 *${escapeMarkdown(resolved.workspace)}* compact done:\n\`\`\`\n${lines}\n\`\`\``);
+      }
+    } catch {
+      // ignore
+    }
+    return;
+  }
+
+  // Phase 2: Wait up to 60s for "Compacting" to disappear (compact finished)
+  for (let i = 0; i < 30; i++) {
+    await sleep(2000);
+    try {
+      const output = await capturePane(tmuxName);
+      if (!output.includes('Compacting')) {
+        const lines = output.trim().split('\n').slice(-10).join('\n');
+        await sendMessage(`\u2705 *${escapeMarkdown(resolved.workspace)}* compact done:\n\`\`\`\n${lines}\n\`\`\``);
+        return;
+      }
+    } catch {
+      break;
+    }
+  }
+
+  // Timeout — show current pane state
+  try {
+    const output = await capturePane(tmuxName);
+    const trimmed = output.trim().split('\n').slice(-5).join('\n');
+    await sendMessage(`\u23f3 *${escapeMarkdown(resolved.workspace)}* compact may still be running:\n\`\`\`\n${trimmed}\n\`\`\``);
+  } catch {
+    // ignore
+  }
+}
+
 async function injectAndRespond(session, command, workspace) {
   const tmuxName = session.tmuxSession;
 
@@ -282,7 +376,7 @@ async function injectAndRespond(session, command, workspace) {
     await tmuxExec(`tmux has-session -t ${tmuxName} 2>/dev/null`);
   } catch {
     await sendMessage(`Tmux session \`${tmuxName}\` not found. Is Claude running in *${escapeMarkdown(workspace)}*?`);
-    return;
+    return false;
   }
 
   // Inject command directly via 3-step tmux send-keys (no confirmation polling)
@@ -299,8 +393,10 @@ async function injectAndRespond(session, command, workspace) {
     if (sent && sent.message_id) {
       trackNotificationMessage(sent.message_id, workspace, 'bot-confirm');
     }
+    return true;
   } catch (err) {
     await sendMessage(`\u274c Failed: ${err.message}`);
+    return false;
   }
 }
 
@@ -441,6 +537,13 @@ async function processMessage(msg) {
   const useMatch = text.match(/^\/use(?:\s+(.*))?$/);
   if (useMatch) {
     await handleUse(useMatch[1] ? useMatch[1].trim() : null);
+    return;
+  }
+
+  // /compact [workspace]
+  const compactMatch = text.match(/^\/compact(?:\s+(\S+))?$/);
+  if (compactMatch) {
+    await handleCompact(compactMatch[1] || null);
     return;
   }
 

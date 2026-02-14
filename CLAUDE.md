@@ -91,6 +91,7 @@ Claude Code Hooks  -->  Hook Scripts  -->  Telegram Bot  -->  User
 - `/use <workspace>` - Set default workspace for plain text routing (prefix matching supported)
 - `/use` - Show current default workspace
 - `/use clear` / `/use none` - Clear default workspace
+- `/compact [workspace]` - Compact context in workspace (injects `/compact` slash command)
 - `/sessions` - List active sessions (shows default workspace)
 - `/status <workspace>` - Show tmux pane output
 - `/cmd <TOKEN> <command>` - Direct token-based command
@@ -105,7 +106,7 @@ Claude Code Hooks  -->  Hook Scripts  -->  Telegram Bot  -->  User
 **Reply-to routing**: Replying to any bot notification (permission, question, status, or confirmation) routes the reply text to that notification's workspace. All hooks track their sent `message_id` in `src/data/message-workspace-map.json`.
 
 **Routing priority** (in `processMessage()`):
-1. Built-in commands: `/help`, `/start`, `/sessions`, `/status`, `/use`
+1. Built-in commands: `/help`, `/start`, `/sessions`, `/status`, `/use`, `/compact`
 2. `/cmd TOKEN command` — direct token routing
 3. `/<workspace> command` — prefix-resolved workspace routing
 4. `/<workspace>` (bare) — prefix-resolved status

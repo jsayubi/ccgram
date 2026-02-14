@@ -232,6 +232,9 @@ function cleanTmuxOutput(raw) {
       /^Frosting/i.test(last) ||                        // Frosting... (running stop hooks...)
       /running\s+(stop\s+)?hooks/i.test(last) ||        // hook messages
       /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(last) ||                    // spinners
+      /^[·•]\s*(Mulling|Thinking|Reasoning)/i.test(last) || // thinking indicators
+      /^[▶►]{1,2}\s/.test(last) ||                      // toolbar hints: ▶▶ accept edits on...
+      /accept edits|shift\+tab to cycle/i.test(last) || // Claude Code bottom toolbar
       /^(Clauding|Working|Waiting|Processing)/i.test(last)
     ) {
       response.pop();
@@ -259,6 +262,11 @@ function cleanTmuxOutput(raw) {
     if (/^(Clauding|Working|Waiting|Processing)/i.test(t)) return false;
     if (/^Frosting/i.test(t)) return false;
     if (/running\s+(stop\s+)?hooks/i.test(t)) return false;
+    // Thinking indicators: · Mulling..., · Thinking...
+    if (/^[·•]\s*(Mulling|Thinking|Reasoning)/i.test(t)) return false;
+    // Claude Code bottom toolbar: ▶▶ accept edits on (shift+tab to cycle)
+    if (/^[▶►]{1,2}\s/.test(t)) return false;
+    if (/accept edits|shift\+tab to cycle/i.test(t)) return false;
     // Status bar pattern: "name | model | % left | time | cost"
     if (/^.+\|.+\|.+\|.+\$/.test(t)) return false;
     return true;

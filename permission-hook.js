@@ -19,7 +19,7 @@ require('dotenv').config({ path: path.join(__dirname, '.env'), quiet: true });
 const fs = require('fs');
 const https = require('https');
 const { execSync } = require('child_process');
-const { extractWorkspaceName } = require('./workspace-router');
+const { extractWorkspaceName, trackNotificationMessage } = require('./workspace-router');
 const { generatePromptId, writePending, cleanPrompt, PROMPTS_DIR } = require('./prompt-bridge');
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -125,8 +125,11 @@ async function main() {
   // Send Telegram message with inline keyboard
   debugLog(`[${promptId}] Sending Telegram message for ${toolName}...`);
   try {
-    await sendTelegramWithKeyboard(messageText, keyboard);
+    const result = await sendTelegramWithKeyboard(messageText, keyboard);
     debugLog(`[${promptId}] Telegram message sent`);
+    if (result && result.message_id) {
+      trackNotificationMessage(result.message_id, workspace, 'permission');
+    }
   } catch (err) {
     debugLog(`[${promptId}] Telegram send failed: ${err.message}`);
     process.stderr.write(`[permission-hook] Telegram send failed: ${err.message}\n`);
@@ -229,7 +232,12 @@ function sendTelegramWithKeyboard(text, replyMarkup) {
       res.on('data', (chunk) => { data += chunk; });
       res.on('end', () => {
         if (res.statusCode >= 200 && res.statusCode < 300) {
-          resolve(data);
+          try {
+            const parsed = JSON.parse(data);
+            resolve(parsed.result || null);
+          } catch {
+            resolve(null);
+          }
         } else {
           reject(new Error(`Telegram API ${res.statusCode}: ${data}`));
         }

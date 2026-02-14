@@ -17,7 +17,7 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env'), quiet: true });
 
 const https = require('https');
-const { extractWorkspaceName } = require('./workspace-router');
+const { extractWorkspaceName, trackNotificationMessage } = require('./workspace-router');
 const { generatePromptId, writePending } = require('./prompt-bridge');
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -95,13 +95,16 @@ async function main() {
 
       // Send Telegram message with inline keyboard
       try {
-        await sendTelegramWithKeyboard(messageText, { inline_keyboard: keyboard });
+        const result = await sendTelegramWithKeyboard(messageText, { inline_keyboard: keyboard });
+        if (result && result.message_id) {
+          trackNotificationMessage(result.message_id, workspace, 'question');
+        }
       } catch (err) {
         process.stderr.write(`[question-notify] Telegram send failed: ${err.message}\n`);
       }
     } else {
       // No options — free text question
-      messageText += `\n\n_Reply with_ \`/${escapeMarkdown(workspace)} your answer\``;
+      messageText += `\n\n_Reply to this message with your answer_`;
 
       writePending(promptId, {
         type: 'question-freetext',
@@ -111,7 +114,10 @@ async function main() {
       });
 
       try {
-        await sendTelegram(messageText);
+        const result = await sendTelegram(messageText);
+        if (result && result.message_id) {
+          trackNotificationMessage(result.message_id, workspace, 'question-freetext');
+        }
       } catch (err) {
         process.stderr.write(`[question-notify] Telegram send failed: ${err.message}\n`);
       }
@@ -149,7 +155,12 @@ function sendTelegramWithKeyboard(text, replyMarkup) {
       res.on('data', (chunk) => { data += chunk; });
       res.on('end', () => {
         if (res.statusCode >= 200 && res.statusCode < 300) {
-          resolve(data);
+          try {
+            const parsed = JSON.parse(data);
+            resolve(parsed.result || null);
+          } catch {
+            resolve(null);
+          }
         } else {
           reject(new Error(`Telegram API ${res.statusCode}: ${data}`));
         }
@@ -191,7 +202,12 @@ function sendTelegram(text) {
       res.on('data', (chunk) => { data += chunk; });
       res.on('end', () => {
         if (res.statusCode >= 200 && res.statusCode < 300) {
-          resolve(data);
+          try {
+            const parsed = JSON.parse(data);
+            resolve(parsed.result || null);
+          } catch {
+            resolve(null);
+          }
         } else {
           reject(new Error(`Telegram API ${res.statusCode}: ${data}`));
         }

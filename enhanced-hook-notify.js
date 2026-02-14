@@ -15,7 +15,7 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env'), quiet: true });
 
 const https = require('https');
-const { upsertSession, extractWorkspaceName } = require('./workspace-router');
+const { upsertSession, extractWorkspaceName, trackNotificationMessage } = require('./workspace-router');
 const { hasPendingForWorkspace } = require('./prompt-bridge');
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -84,7 +84,10 @@ async function main() {
     }
 
     try {
-      await sendTelegram(message);
+      const result = await sendTelegram(message);
+      if (result && result.message_id) {
+        trackNotificationMessage(result.message_id, workspace, `hook-${STATUS_ARG}`);
+      }
     } catch (err) {
       console.error(`[hook-notify] Telegram send failed: ${err.message}`);
     }
@@ -117,7 +120,12 @@ function sendTelegram(text) {
       res.on('data', (chunk) => { data += chunk; });
       res.on('end', () => {
         if (res.statusCode >= 200 && res.statusCode < 300) {
-          resolve(data);
+          try {
+            const parsed = JSON.parse(data);
+            resolve(parsed.result || null);
+          } catch {
+            resolve(null);
+          }
         } else {
           reject(new Error(`Telegram API ${res.statusCode}: ${data}`));
         }

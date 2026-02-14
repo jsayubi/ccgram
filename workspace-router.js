@@ -182,14 +182,156 @@ function formatAge(seconds) {
   return `${Math.floor(seconds / 86400)}d ago`;
 }
 
+// ── Prefix / Fuzzy Workspace Resolution ─────────────────────────
+
+const DEFAULT_WORKSPACE_PATH = path.join(__dirname, 'src/data/default-workspace.json');
+const MESSAGE_WORKSPACE_MAP_PATH = path.join(__dirname, 'src/data/message-workspace-map.json');
+
+/**
+ * Resolve a workspace name by exact match, then prefix match.
+ * Returns one of:
+ *   { type: 'exact',     match: { token, session } }
+ *   { type: 'prefix',    match: { token, session }, workspace: string }
+ *   { type: 'ambiguous', matches: [{ workspace, token, session }] }
+ *   { type: 'none' }
+ */
+function resolveWorkspace(name) {
+  const map = readSessionMap();
+  const lower = name.toLowerCase();
+
+  // Build deduplicated workspace → { token, session } map (newest wins)
+  const byWorkspace = new Map();
+  for (const [token, session] of Object.entries(map)) {
+    if (isExpired(session)) continue;
+    const ws = extractWorkspaceName(session.cwd);
+    if (!ws) continue;
+    const existing = byWorkspace.get(ws.toLowerCase());
+    if (!existing || session.createdAt > existing.session.createdAt) {
+      byWorkspace.set(ws.toLowerCase(), { workspace: ws, token, session });
+    }
+  }
+
+  // Exact match (case-insensitive)
+  const exact = byWorkspace.get(lower);
+  if (exact) {
+    return { type: 'exact', match: { token: exact.token, session: exact.session }, workspace: exact.workspace };
+  }
+
+  // Prefix match
+  const prefixMatches = [];
+  for (const [wsLower, entry] of byWorkspace) {
+    if (wsLower.startsWith(lower)) {
+      prefixMatches.push(entry);
+    }
+  }
+
+  if (prefixMatches.length === 1) {
+    const m = prefixMatches[0];
+    return { type: 'prefix', match: { token: m.token, session: m.session }, workspace: m.workspace };
+  }
+
+  if (prefixMatches.length > 1) {
+    return {
+      type: 'ambiguous',
+      matches: prefixMatches.map(m => ({ workspace: m.workspace, token: m.token, session: m.session })),
+    };
+  }
+
+  return { type: 'none' };
+}
+
+// ── Default Workspace ───────────────────────────────────────────
+
+function getDefaultWorkspace() {
+  try {
+    const raw = fs.readFileSync(DEFAULT_WORKSPACE_PATH, 'utf8');
+    const data = JSON.parse(raw);
+    return data.workspace || null;
+  } catch {
+    return null;
+  }
+}
+
+function setDefaultWorkspace(name) {
+  const dir = path.dirname(DEFAULT_WORKSPACE_PATH);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  if (name) {
+    fs.writeFileSync(DEFAULT_WORKSPACE_PATH, JSON.stringify({ workspace: name }, null, 2), 'utf8');
+  } else {
+    // Clear default
+    try { fs.unlinkSync(DEFAULT_WORKSPACE_PATH); } catch {}
+  }
+}
+
+// ── Message-to-Workspace Tracking (for reply-to routing) ────────
+
+const MESSAGE_MAP_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+function readMessageMap() {
+  try {
+    const raw = fs.readFileSync(MESSAGE_WORKSPACE_MAP_PATH, 'utf8');
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+function writeMessageMap(map) {
+  const dir = path.dirname(MESSAGE_WORKSPACE_MAP_PATH);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  fs.writeFileSync(MESSAGE_WORKSPACE_MAP_PATH, JSON.stringify(map, null, 2), 'utf8');
+}
+
+/**
+ * Track which Telegram message_id belongs to which workspace.
+ * Prunes entries older than 24 hours on each write.
+ */
+function trackNotificationMessage(messageId, workspace, type) {
+  if (!messageId || !workspace) return;
+  const map = readMessageMap();
+  const now = Date.now();
+
+  // Prune old entries
+  for (const [id, entry] of Object.entries(map)) {
+    if (now - entry.timestamp > MESSAGE_MAP_MAX_AGE_MS) {
+      delete map[id];
+    }
+  }
+
+  map[String(messageId)] = { workspace, type, timestamp: now };
+  writeMessageMap(map);
+}
+
+/**
+ * Look up which workspace a Telegram message belongs to.
+ * Returns the workspace name or null.
+ */
+function getWorkspaceForMessage(messageId) {
+  if (!messageId) return null;
+  const map = readMessageMap();
+  const entry = map[String(messageId)];
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > MESSAGE_MAP_MAX_AGE_MS) return null;
+  return entry.workspace;
+}
+
 module.exports = {
   extractWorkspaceName,
   readSessionMap,
   writeSessionMap,
   findSessionByWorkspace,
+  resolveWorkspace,
   listActiveSessions,
   upsertSession,
   pruneExpired,
   isExpired,
+  getDefaultWorkspace,
+  setDefaultWorkspace,
+  trackNotificationMessage,
+  getWorkspaceForMessage,
   SESSION_MAP_PATH,
 };

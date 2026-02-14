@@ -17,12 +17,16 @@ require('dotenv').config({ path: path.join(__dirname, '.env'), quiet: true });
 const https = require('https');
 const { exec } = require('child_process');
 const {
-  findSessionByWorkspace,
+  resolveWorkspace,
   listActiveSessions,
   readSessionMap,
   pruneExpired,
   extractWorkspaceName,
   isExpired,
+  getDefaultWorkspace,
+  setDefaultWorkspace,
+  trackNotificationMessage,
+  getWorkspaceForMessage,
 } = require('./workspace-router');
 const {
   writeResponse,
@@ -126,16 +130,22 @@ function editMessageText(chatId, messageId, text) {
 // ── Command handlers ────────────────────────────────────────────
 
 async function handleHelp() {
+  const defaultWs = getDefaultWorkspace();
   const msg = [
     '*Claude Remote Control*',
     '',
     '`/<workspace> <command>` — Send command to workspace',
+    '`/use <workspace>` — Set default workspace',
+    '`/use` — Show current default',
+    '`/use clear` — Clear default',
     '`/sessions` — List active sessions',
     '`/status <workspace>` — Show tmux output',
     '`/cmd <TOKEN> <command>` — Token-based fallback',
     '`/help` — This message',
     '',
-    '_Example:_ `/wp-super-ai fix the auth bug`',
+    '_Prefix matching:_ `/ass hello` matches `assistant`',
+    '_Reply-to:_ Reply to any notification to route to that workspace',
+    defaultWs ? `_Default:_ plain text routes to *${escapeMarkdown(defaultWs)}*` : '_Tip:_ Use `/use <workspace>` to send plain text without a prefix',
   ].join('\n');
 
   await sendMessage(msg);
@@ -155,23 +165,38 @@ async function handleSessions() {
     return `${statusIcon} *${escapeMarkdown(s.workspace)}* (${s.age})`;
   });
 
-  await sendMessage(`*Active Sessions*\n\n${lines.join('\n')}`);
+  let footer = '';
+  const defaultWs = getDefaultWorkspace();
+  if (defaultWs) {
+    footer = `\n\n_Default workspace:_ *${escapeMarkdown(defaultWs)}*`;
+  }
+
+  await sendMessage(`*Active Sessions*\n\n${lines.join('\n')}${footer}`);
 }
 
 async function handleStatus(workspace) {
-  const match = findSessionByWorkspace(workspace);
-  if (!match) {
+  const resolved = resolveWorkspace(workspace);
+
+  if (resolved.type === 'none') {
     await sendMessage(`No active session for *${escapeMarkdown(workspace)}*.`);
     return;
   }
 
+  if (resolved.type === 'ambiguous') {
+    const names = resolved.matches.map(m => `\`${escapeMarkdown(m.workspace)}\``).join(', ');
+    await sendMessage(`Multiple matches: ${names}. Be more specific.`);
+    return;
+  }
+
+  const match = resolved.match;
+  const resolvedName = resolved.workspace;
   const tmuxName = match.session.tmuxSession;
 
   try {
     const output = await capturePane(tmuxName);
     // Trim and take last 15 lines to avoid message length limits
     const trimmed = output.trim().split('\n').slice(-15).join('\n');
-    await sendMessage(`*${escapeMarkdown(workspace)}* tmux output:\n\`\`\`\n${trimmed}\n\`\`\``);
+    await sendMessage(`*${escapeMarkdown(resolvedName)}* tmux output:\n\`\`\`\n${trimmed}\n\`\`\``);
   } catch (err) {
     await sendMessage(`Could not read tmux session \`${tmuxName}\`: ${err.message}`);
   }
@@ -195,13 +220,58 @@ async function handleCmd(token, command) {
 }
 
 async function handleWorkspaceCommand(workspace, command) {
-  const match = findSessionByWorkspace(workspace);
-  if (!match) {
+  const resolved = resolveWorkspace(workspace);
+
+  if (resolved.type === 'none') {
     await sendMessage(`No active session for *${escapeMarkdown(workspace)}*. Use /sessions to see available workspaces.`);
     return;
   }
 
-  await injectAndRespond(match.session, command, workspace);
+  if (resolved.type === 'ambiguous') {
+    const names = resolved.matches.map(m => `\`${escapeMarkdown(m.workspace)}\``).join(', ');
+    await sendMessage(`Multiple matches: ${names}. Be more specific.`);
+    return;
+  }
+
+  await injectAndRespond(resolved.match.session, command, resolved.workspace);
+}
+
+async function handleUse(arg) {
+  // /use — show current default
+  if (!arg) {
+    const current = getDefaultWorkspace();
+    if (current) {
+      await sendMessage(`Default workspace: *${escapeMarkdown(current)}*\n\nPlain text messages will route here. Use \`/use clear\` to unset.`);
+    } else {
+      await sendMessage('No default workspace set. Use `/use <workspace>` to set one.');
+    }
+    return;
+  }
+
+  // /use clear | /use none — clear default
+  if (arg === 'clear' || arg === 'none') {
+    setDefaultWorkspace(null);
+    await sendMessage('Default workspace cleared.');
+    return;
+  }
+
+  // /use <workspace> — resolve and set
+  const resolved = resolveWorkspace(arg);
+
+  if (resolved.type === 'none') {
+    await sendMessage(`No active session for *${escapeMarkdown(arg)}*. Use /sessions to see available workspaces.`);
+    return;
+  }
+
+  if (resolved.type === 'ambiguous') {
+    const names = resolved.matches.map(m => `\`${escapeMarkdown(m.workspace)}\``).join(', ');
+    await sendMessage(`Multiple matches: ${names}. Be more specific.`);
+    return;
+  }
+
+  const fullName = resolved.workspace;
+  setDefaultWorkspace(fullName);
+  await sendMessage(`Default workspace set to *${escapeMarkdown(fullName)}*. Plain text messages will route here.`);
 }
 
 async function injectAndRespond(session, command, workspace) {
@@ -224,7 +294,11 @@ async function injectAndRespond(session, command, workspace) {
     await sleep(150);
     await tmuxExec(`tmux send-keys -t ${tmuxName} C-m`);
 
-    await sendMessage(`\u2705 Sent to *${escapeMarkdown(workspace)}*: ${escapeMarkdown(command)}`);
+    const sent = await sendMessage(`\u2705 Sent to *${escapeMarkdown(workspace)}*: ${escapeMarkdown(command)}`);
+    // Track the confirmation message so reply-to routing works on it too
+    if (sent && sent.message_id) {
+      trackNotificationMessage(sent.message_id, workspace, 'bot-confirm');
+    }
   } catch (err) {
     await sendMessage(`\u274c Failed: ${err.message}`);
   }
@@ -363,6 +437,13 @@ async function processMessage(msg) {
     return;
   }
 
+  // /use [workspace]
+  const useMatch = text.match(/^\/use(?:\s+(.*))?$/);
+  if (useMatch) {
+    await handleUse(useMatch[1] ? useMatch[1].trim() : null);
+    return;
+  }
+
   // /cmd TOKEN command
   const cmdMatch = text.match(/^\/cmd\s+(\S+)\s+(.+)/s);
   if (cmdMatch) {
@@ -383,20 +464,38 @@ async function processMessage(msg) {
     return;
   }
 
-  // If just a slash command with no args, check if it's a workspace
+  // If just a slash command with no args, check if it's a workspace (with prefix matching)
   const bareWs = text.match(/^\/(\S+)$/);
   if (bareWs) {
-    const match = findSessionByWorkspace(bareWs[1]);
-    if (match) {
-      await handleStatus(bareWs[1]);
+    const resolved = resolveWorkspace(bareWs[1]);
+    if (resolved.type === 'exact' || resolved.type === 'prefix') {
+      await handleStatus(resolved.workspace);
+    } else if (resolved.type === 'ambiguous') {
+      const names = resolved.matches.map(m => `\`${escapeMarkdown(m.workspace)}\``).join(', ');
+      await sendMessage(`Multiple matches: ${names}. Be more specific.`);
     } else {
       await sendMessage(`Unknown command: \`${text}\`. Try /help`);
     }
     return;
   }
 
-  // Plain text — ignore or give hint
-  await sendMessage('Use `/help` to see available commands.');
+  // Plain text — try reply-to routing, then default workspace, then show hint
+  const replyToId = msg.reply_to_message && msg.reply_to_message.message_id;
+  if (replyToId) {
+    const replyWorkspace = getWorkspaceForMessage(replyToId);
+    if (replyWorkspace) {
+      await handleWorkspaceCommand(replyWorkspace, text);
+      return;
+    }
+  }
+
+  const defaultWs = getDefaultWorkspace();
+  if (defaultWs) {
+    await handleWorkspaceCommand(defaultWs, text);
+    return;
+  }
+
+  await sendMessage('Use `/help` to see available commands, or `/use <workspace>` to set a default.');
 }
 
 // ── Long polling loop ───────────────────────────────────────────

@@ -28,9 +28,9 @@ Claude Code Hooks  -->  Hook Scripts  -->  Telegram Bot  -->  User
 ### Core Modules
 | File | Purpose |
 |------|---------|
-| `workspace-telegram-bot.js` | Long-polling Telegram bot, handles callbacks and commands |
+| `workspace-telegram-bot.js` | Long-polling Telegram bot, handles callbacks, commands, and smart routing |
 | `prompt-bridge.js` | File-based IPC via `/tmp/claude-prompts/` (pending/response JSON) |
-| `workspace-router.js` | Maps workspace names to tmux sessions via session-map.json |
+| `workspace-router.js` | Maps workspace names to tmux sessions, prefix resolution, default workspace, message tracking |
 | `claude-remote.js` | Main CLI entry point (`notify`, `test`, `status`, `config`, etc.) |
 | `smart-monitor.js` | Tmux pane monitoring for completion/waiting detection |
 
@@ -41,6 +41,8 @@ Claude Code Hooks  -->  Hook Scripts  -->  Telegram Bot  -->  User
 | `config/default.json` | Default settings (language, sounds) |
 | `config/channels.json` | Channel definitions (Telegram, LINE, Email, Desktop) |
 | `src/data/session-map.json` | Workspace-to-tmux session mapping |
+| `src/data/default-workspace.json` | Persisted default workspace for `/use` command |
+| `src/data/message-workspace-map.json` | Telegram message_id → workspace mapping for reply-to routing (24h TTL) |
 | `/tmp/claude-prompts/` | Runtime IPC directory (auto-cleaned after 5 min) |
 
 ## Hook Output Formats
@@ -85,11 +87,31 @@ Claude Code Hooks  -->  Hook Scripts  -->  Telegram Bot  -->  User
 
 ## Telegram Bot Commands
 
-- `/<workspace> <message>` - Send command to workspace session
-- `/sessions` - List active sessions
+- `/<workspace> <message>` - Send command to workspace session (supports prefix matching)
+- `/use <workspace>` - Set default workspace for plain text routing (prefix matching supported)
+- `/use` - Show current default workspace
+- `/use clear` / `/use none` - Clear default workspace
+- `/sessions` - List active sessions (shows default workspace)
 - `/status <workspace>` - Show tmux pane output
 - `/cmd <TOKEN> <command>` - Direct token-based command
 - `/help` - Show help
+
+### Smart Routing
+
+**Prefix matching**: Workspace names can be abbreviated — `/ass hello` matches `assistant`. If the prefix is ambiguous (matches multiple workspaces), the bot lists the matches.
+
+**Default workspace**: `/use assistant` sets a default. Plain text messages (no `/` prefix) route to the default workspace automatically.
+
+**Reply-to routing**: Replying to any bot notification (permission, question, status, or confirmation) routes the reply text to that notification's workspace. All hooks track their sent `message_id` in `src/data/message-workspace-map.json`.
+
+**Routing priority** (in `processMessage()`):
+1. Built-in commands: `/help`, `/start`, `/sessions`, `/status`, `/use`
+2. `/cmd TOKEN command` — direct token routing
+3. `/<workspace> command` — prefix-resolved workspace routing
+4. `/<workspace>` (bare) — prefix-resolved status
+5. Plain text with reply-to a tracked message — route to that workspace
+6. Plain text with default workspace set — route there
+7. Plain text fallback — show help hint
 
 ## Callback Data Format
 

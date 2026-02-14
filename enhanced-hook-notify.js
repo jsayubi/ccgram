@@ -222,21 +222,31 @@ function cleanTmuxOutput(raw) {
 
   let response = lines.slice(responseStart);
 
-  // Strip from bottom: remove status bar, prompt, frosting lines, etc.
+  // Strip from bottom: remove noise, but capture status bar and toolbar for footer
+  let capturedStatusBar = null;
+  let capturedToolbar = null;
+
   while (response.length) {
     const last = response[response.length - 1].trim();
-    if (
-      !last ||                                          // empty
-      /^❯\s*$/.test(last) ||                            // bare prompt
-      /^\|.*\|.*\|/.test(last) ||                       // status bar: wp-super-ai | Opus 4.6 | ...
-      /^Frosting/i.test(last) ||                        // Frosting... (running stop hooks...)
-      /running\s+(stop\s+)?hooks/i.test(last) ||        // hook messages
-      /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(last) ||                    // spinners
-      /^[·•]\s*(Mulling|Thinking|Reasoning)/i.test(last) || // thinking indicators
-      /^[▶►]{1,2}\s/.test(last) ||                      // toolbar hints: ▶▶ accept edits on...
-      /accept edits|shift\+tab to cycle/i.test(last) || // Claude Code bottom toolbar
+    if (!last || /^❯\s*$/.test(last)) {
+      // Empty lines and bare prompt — discard
+      response.pop();
+    } else if (/^.+\|.+\|.+\|/.test(last)) {
+      // Status bar: "workspace | model | % left | time | cost" — capture
+      capturedStatusBar = capturedStatusBar || last;
+      response.pop();
+    } else if (/^[▶►]{1,2}\s/.test(last) || /accept edits|shift\+tab to cycle/i.test(last)) {
+      // Toolbar: "▶▶ accept edits on (shift+tab to cycle)" — capture
+      capturedToolbar = capturedToolbar || last;
+      response.pop();
+    } else if (
+      /^Frosting/i.test(last) ||
+      /running\s+(stop\s+)?hooks/i.test(last) ||
+      /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(last) ||
+      /^[·•]\s*(Mulling|Thinking|Reasoning)/i.test(last) ||
       /^(Clauding|Working|Waiting|Processing)/i.test(last)
     ) {
+      // Pure noise — discard
       response.pop();
     } else {
       break;
@@ -264,11 +274,10 @@ function cleanTmuxOutput(raw) {
     if (/running\s+(stop\s+)?hooks/i.test(t)) return false;
     // Thinking indicators: · Mulling..., · Thinking...
     if (/^[·•]\s*(Mulling|Thinking|Reasoning)/i.test(t)) return false;
-    // Claude Code bottom toolbar: ▶▶ accept edits on (shift+tab to cycle)
+    // Status bar and toolbar (already captured for footer)
+    if (/^.+\|.+\|.+\|/.test(t)) return false;
     if (/^[▶►]{1,2}\s/.test(t)) return false;
     if (/accept edits|shift\+tab to cycle/i.test(t)) return false;
-    // Status bar pattern: "name | model | % left | time | cost"
-    if (/^.+\|.+\|.+\|.+\$/.test(t)) return false;
     return true;
   });
 
@@ -289,9 +298,19 @@ function cleanTmuxOutput(raw) {
   while (collapsed.length && !collapsed[0].trim()) collapsed.shift();
   while (collapsed.length && !collapsed[collapsed.length - 1].trim()) collapsed.pop();
 
-  if (collapsed.length === 0) return null;
+  if (collapsed.length === 0 && !capturedStatusBar && !capturedToolbar) return null;
 
-  return collapsed.join('\n');
+  let result = collapsed.join('\n');
+
+  // Append captured status bar and toolbar as a clean footer
+  if (capturedStatusBar || capturedToolbar) {
+    if (result) result += '\n\n';
+    if (capturedStatusBar) result += `─ ${capturedStatusBar}`;
+    if (capturedStatusBar && capturedToolbar) result += '\n';
+    if (capturedToolbar) result += capturedToolbar;
+  }
+
+  return result || null;
 }
 
 function escapeMarkdown(text) {

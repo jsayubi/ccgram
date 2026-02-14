@@ -52,5 +52,5 @@ temp/
 src/data/
 !src/data/.gitkeep
 
-# Claude configuration (user-specific)
-CLAUDE.md
+# Claude configuration (user-specific, kept local)
+# CLAUDE.md is now tracked as project documentation

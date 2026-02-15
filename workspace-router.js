@@ -340,12 +340,80 @@ function recordProjectUsage(name, projectPath) {
   fs.writeFileSync(PROJECT_HISTORY_PATH, JSON.stringify(trimmed, null, 2), 'utf8');
 }
 
+const PINNED_PROJECTS = ['assistant', 'claude-remote'];
+
 function getRecentProjects(limit = 10) {
+  const home = process.env.HOME || '/Users/aliayubi';
   const history = readProjectHistory();
-  return Object.entries(history)
-    .sort((a, b) => b[1].lastUsed - a[1].lastUsed)
-    .slice(0, limit)
-    .map(([name, data]) => ({ name, path: data.path }));
+
+  // 1. Scan project directories and get modification times
+  const projects = new Map(); // name → { path, lastActive }
+
+  const scanDirs = [
+    path.join(home, 'projects'),
+    path.join(home, 'tools'),
+  ];
+
+  for (const base of scanDirs) {
+    try {
+      const entries = fs.readdirSync(base, { withFileTypes: true });
+      for (const e of entries) {
+        if (!e.isDirectory()) continue;
+        const fullPath = path.join(base, e.name);
+        try {
+          const mtime = fs.statSync(fullPath).mtimeMs;
+          const existing = projects.get(e.name);
+          if (!existing || mtime > existing.lastActive) {
+            projects.set(e.name, { path: fullPath, lastActive: mtime });
+          }
+        } catch {}
+      }
+    } catch {}
+  }
+
+  // Also check ~/assistant directly (not under ~/projects/ or ~/tools/)
+  try {
+    const assistantPath = path.join(home, 'assistant');
+    const mtime = fs.statSync(assistantPath).mtimeMs;
+    const existing = projects.get('assistant');
+    if (!existing || mtime > existing.lastActive) {
+      projects.set('assistant', { path: assistantPath, lastActive: mtime });
+    }
+  } catch {}
+
+  // 2. Merge with project history (use whichever timestamp is more recent)
+  for (const [name, data] of Object.entries(history)) {
+    const existing = projects.get(name);
+    if (existing) {
+      existing.lastActive = Math.max(existing.lastActive, data.lastUsed);
+    } else {
+      // History entry for a directory not in scan dirs — only include if path still exists
+      try {
+        if (fs.statSync(data.path).isDirectory()) {
+          projects.set(name, { path: data.path, lastActive: data.lastUsed });
+        }
+      } catch {}
+    }
+  }
+
+  // 3. Separate pinned from unpinned
+  const pinned = [];
+  const unpinned = [];
+  for (const [name, data] of projects) {
+    if (PINNED_PROJECTS.includes(name)) {
+      pinned.push({ name, path: data.path });
+    } else {
+      unpinned.push({ name, path: data.path, lastActive: data.lastActive });
+    }
+  }
+
+  // 4. Sort pinned in defined order, unpinned by lastActive descending
+  pinned.sort((a, b) => PINNED_PROJECTS.indexOf(a.name) - PINNED_PROJECTS.indexOf(b.name));
+  unpinned.sort((a, b) => b.lastActive - a.lastActive);
+
+  // 5. Combine: pinned first, then unpinned, limited to N
+  const result = [...pinned, ...unpinned].slice(0, limit);
+  return result.map(({ name, path: p }) => ({ name, path: p }));
 }
 
 module.exports = {

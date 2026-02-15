@@ -8,7 +8,8 @@
  *   /sessions                List all active sessions with workspace names
  *   /cmd <TOKEN> <command>   Token-based fallback for direct session access
  *   /help                    Show available commands
- *   /status <workspace>      Show tmux pane output for a workspace
+ *   /status [workspace]      Show tmux pane output for a workspace
+ *   /stop [workspace]       Interrupt running prompt (Ctrl+C)
  *   /compact [workspace]     Compact context in a workspace session
  */
 
@@ -116,6 +117,14 @@ function sendMessage(text) {
   });
 }
 
+function sendHtmlMessage(text) {
+  return telegramAPI('sendMessage', {
+    chat_id: CHAT_ID,
+    text,
+    parse_mode: 'HTML',
+  });
+}
+
 function answerCallbackQuery(callbackQueryId, text) {
   return telegramAPI('answerCallbackQuery', {
     callback_query_id: callbackQueryId,
@@ -146,7 +155,8 @@ async function handleHelp() {
     '`/compact [workspace]` — Compact context in workspace',
     '`/new [project]` — Start Claude in a project (shows recent if no arg)',
     '`/sessions` — List active sessions',
-    '`/status <workspace>` — Show tmux output',
+    '`/status [workspace]` — Show tmux output',
+    '`/stop [workspace]` — Interrupt running prompt',
     '`/cmd <TOKEN> <command>` — Token-based fallback',
     '`/help` — This message',
     '',
@@ -181,7 +191,20 @@ async function handleSessions() {
   await sendMessage(`*Active Sessions*\n\n${lines.join('\n')}${footer}`);
 }
 
-async function handleStatus(workspace) {
+async function handleStatus(workspaceArg) {
+  let workspace;
+  if (workspaceArg) {
+    workspace = workspaceArg;
+  } else {
+    const defaultWs = getDefaultWorkspace();
+    if (defaultWs) {
+      workspace = defaultWs;
+    } else {
+      await sendMessage('Usage: `/status <workspace>` or set a default with `/use`.');
+      return;
+    }
+  }
+
   const resolved = resolveWorkspace(workspace);
 
   if (resolved.type === 'none') {
@@ -201,11 +224,62 @@ async function handleStatus(workspace) {
 
   try {
     const output = await capturePane(tmuxName);
-    // Trim and take last 15 lines to avoid message length limits
-    const trimmed = output.trim().split('\n').slice(-15).join('\n');
-    await sendMessage(`*${escapeMarkdown(resolvedName)}* tmux output:\n\`\`\`\n${trimmed}\n\`\`\``);
+    // Trim and take last 20 lines to avoid message length limits
+    const trimmed = output.trim().split('\n').slice(-20).join('\n');
+    const htmlMsg = `<b>${escapeHtml(resolvedName)}</b> tmux output:\n<pre>${escapeHtml(trimmed)}</pre>`;
+    try {
+      await sendHtmlMessage(htmlMsg);
+    } catch {
+      // Fallback to plain text if HTML fails
+      await telegramAPI('sendMessage', { chat_id: CHAT_ID, text: `${resolvedName} tmux output:\n${trimmed}` });
+    }
   } catch (err) {
     await sendMessage(`Could not read tmux session \`${tmuxName}\`: ${err.message}`);
+  }
+}
+
+async function handleStop(workspaceArg) {
+  let workspace;
+  if (workspaceArg) {
+    workspace = workspaceArg;
+  } else {
+    const defaultWs = getDefaultWorkspace();
+    if (defaultWs) {
+      workspace = defaultWs;
+    } else {
+      await sendMessage('Usage: `/stop <workspace>` or set a default with `/use`.');
+      return;
+    }
+  }
+
+  const resolved = resolveWorkspace(workspace);
+
+  if (resolved.type === 'none') {
+    await sendMessage(`No active session for *${escapeMarkdown(workspace)}*.`);
+    return;
+  }
+
+  if (resolved.type === 'ambiguous') {
+    const names = resolved.matches.map(m => `\`${escapeMarkdown(m.workspace)}\``).join(', ');
+    await sendMessage(`Multiple matches: ${names}. Be more specific.`);
+    return;
+  }
+
+  const resolvedName = resolved.workspace;
+  const tmuxName = resolved.match.session.tmuxSession;
+
+  try {
+    await tmuxExec(`tmux has-session -t ${tmuxName} 2>/dev/null`);
+  } catch {
+    await sendMessage(`Tmux session \`${tmuxName}\` not found. Is Claude running in *${escapeMarkdown(resolvedName)}*?`);
+    return;
+  }
+
+  try {
+    await tmuxExec(`tmux send-keys -t ${tmuxName} C-c`);
+    await sendMessage(`\u26d4 Sent interrupt to *${escapeMarkdown(resolvedName)}*`);
+  } catch (err) {
+    await sendMessage(`\u274c Failed to interrupt: ${err.message}`);
   }
 }
 
@@ -739,10 +813,17 @@ async function processMessage(msg) {
     return;
   }
 
-  // /status <workspace>
-  const statusMatch = text.match(/^\/status\s+(\S+)/);
+  // /status [workspace]
+  const statusMatch = text.match(/^\/status(?:\s+(\S+))?$/);
   if (statusMatch) {
-    await handleStatus(statusMatch[1]);
+    await handleStatus(statusMatch[1] || null);
+    return;
+  }
+
+  // /stop [workspace]
+  const stopMatch = text.match(/^\/stop(?:\s+(\S+))?$/);
+  if (stopMatch) {
+    await handleStop(stopMatch[1] || null);
     return;
   }
 
@@ -871,6 +952,10 @@ function capturePane(tmuxSession) {
 function escapeMarkdown(text) {
   // Telegram Markdown v1 only needs these escaped
   return text.replace(/([_*`\[])/g, '\\$1');
+}
+
+function escapeHtml(text) {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function sleep(ms) {

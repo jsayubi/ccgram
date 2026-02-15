@@ -4,13 +4,14 @@
  * Question Notify — Called by Claude Code's PreToolUse hook (matcher: AskUserQuestion).
  *
  * Non-blocking: sends a Telegram message with option buttons, then returns
- * immediately with "allow" so the tool runs. The bot callback handler later
- * injects the selected option number via tmux.
+ * without stdout output. AskUserQuestion must be in the permissions allow
+ * list (settings.json) so Claude Code handles permission automatically.
+ * The bot callback handler later injects the selected option number via tmux.
  *
  * Stdin JSON: { tool_name, tool_input, cwd, session_id, hook_event_name }
  * tool_input.questions: [{ question, header, options: [{ label, description }], multiSelect }]
  *
- * Stdout JSON: { "hookSpecificOutput": { "hookEventName": "PreToolUse", "permissionDecision": "allow" } }
+ * Stdout: (none — intentionally omitted so Claude Code shows the interactive question UI)
  */
 
 const path = require('path');
@@ -26,20 +27,17 @@ const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 // ── Main ────────────────────────────────────────────────────────
 
 async function main() {
-  // Always allow the tool — output immediately so we don't block
-  const allowOutput = JSON.stringify({
-    hookSpecificOutput: {
-      hookEventName: 'PreToolUse',
-      permissionDecision: 'allow',
-    },
-  });
+  // NOTE: We intentionally do NOT output permissionDecision to stdout.
+  // AskUserQuestion is in the permissions allow list (settings.json), so
+  // Claude Code will allow it automatically. If we output "allow" here,
+  // Claude Code bypasses the interactive question UI entirely.
+  // This hook only sends the Telegram notification for remote answering.
 
   const raw = await readStdin();
   let payload;
   try {
     payload = JSON.parse(raw);
   } catch {
-    process.stdout.write(allowOutput);
     return;
   }
 
@@ -50,7 +48,6 @@ async function main() {
   // Extract questions from tool_input
   const questions = toolInput.questions || [];
   if (questions.length === 0) {
-    process.stdout.write(allowOutput);
     return;
   }
 
@@ -124,8 +121,6 @@ async function main() {
     }
   }
 
-  // Output allow — don't block the tool
-  process.stdout.write(allowOutput);
 }
 
 // ── Telegram ────────────────────────────────────────────────────
@@ -266,12 +261,4 @@ function escapeMarkdown(text) {
 
 main().catch((err) => {
   process.stderr.write(`[question-notify] Fatal: ${err.message}\n`);
-  // Still output allow so we don't block the tool
-  process.stdout.write(JSON.stringify({
-    hookSpecificOutput: {
-      hookEventName: 'PreToolUse',
-      permissionDecision: 'allow',
-    },
-  }));
-  process.exit(1);
 });

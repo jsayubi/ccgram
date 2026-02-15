@@ -475,9 +475,16 @@ async function processCallbackQuery(query) {
       ? pending.options[parseInt(optionNumber, 10) - 1]
       : `Option ${optionNumber}`;
 
-    // Inject option number + Enter into tmux
+    // Inject option selection via arrow keys + Enter into tmux
+    // Claude Code's AskUserQuestion UI uses an interactive selector:
+    // first option is pre-highlighted, so Down (N-1) times + Enter
+    const downPresses = parseInt(optionNumber, 10) - 1;
     try {
-      await tmuxExec(`tmux send-keys -t ${pending.tmuxSession} '${optionNumber}' C-m`);
+      for (let i = 0; i < downPresses; i++) {
+        await tmuxExec(`tmux send-keys -t ${pending.tmuxSession} Down`);
+        await sleep(100);
+      }
+      await tmuxExec(`tmux send-keys -t ${pending.tmuxSession} Enter`);
       await answerCallbackQuery(query.id, `Selected: ${optionLabel}`);
     } catch (err) {
       logger.error(`Failed to inject tmux keystroke: ${err.message}`);

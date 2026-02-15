@@ -64,33 +64,30 @@ async function main() {
 
     const icon = STATUS_ARG === 'completed' ? '\u2705' : '\u23f3';
     const label = STATUS_ARG === 'completed' ? 'Task completed' : 'Waiting for input';
-    let message = `${icon} ${label} in *${escapeMarkdown(workspace)}*`;
+    let message = `${icon} ${label} in <b>${escapeHtml(workspace)}</b>`;
 
     // Extract response text from transcript file
-    let responseText = null;
     if (payload.transcript_path) {
       try {
-        responseText = extractLastResponse(payload.transcript_path);
+        const responseText = extractLastResponse(payload.transcript_path);
+        if (responseText) {
+          const truncated = responseText.length > 3500
+            ? responseText.slice(0, 3497) + '...'
+            : responseText;
+          message += `\n\n${markdownToHtml(truncated)}`;
+        }
       } catch {}
     }
 
-    if (responseText) {
-      const truncated = responseText.length > 3500
-        ? responseText.slice(0, 3497) + '...'
-        : responseText;
-      message += `\n\n${truncated}`;
-    }
-
     try {
-      // Try sending with Markdown for the header
-      const result = await sendTelegram(message);
+      const result = await sendTelegram(message, 'HTML');
       if (result && result.message_id) {
         trackNotificationMessage(result.message_id, workspace, `hook-${STATUS_ARG}`);
       }
     } catch (err) {
-      // Markdown failed — send as plain text
+      // HTML failed — send as plain text
       try {
-        const plain = message.replace(/\*([^*]+)\*/g, '$1');
+        const plain = message.replace(/<[^>]+>/g, '');
         const result = await sendTelegram(plain, false);
         if (result && result.message_id) {
           trackNotificationMessage(result.message_id, workspace, `hook-${STATUS_ARG}`);
@@ -104,10 +101,10 @@ async function main() {
 
 // ── Telegram ────────────────────────────────────────────────────
 
-function sendTelegram(text, useMarkdown = true) {
+function sendTelegram(text, parseMode = 'Markdown') {
   return new Promise((resolve, reject) => {
     const payload = { chat_id: CHAT_ID, text };
-    if (useMarkdown) payload.parse_mode = 'Markdown';
+    if (parseMode) payload.parse_mode = parseMode;
     const body = JSON.stringify(payload);
 
     const options = {
@@ -200,6 +197,27 @@ function detectTmuxSession() {
     }
   }
   return null;
+}
+
+function escapeHtml(text) {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function markdownToHtml(text) {
+  let html = escapeHtml(text);
+  // Code blocks: ```...``` → <pre>...</pre>
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => `<pre>${code.trim()}</pre>`);
+  // Inline code: `...` → <code>...</code>
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Bold: **...** → <b>...</b>
+  html = html.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+  // Italic: *...* → <i>...</i>
+  html = html.replace(/\*(.+?)\*/g, '<i>$1</i>');
+  // Bullets: - item → • item
+  html = html.replace(/^[-*]\s+/gm, '• ');
+  // Strip headers: ## text → text
+  html = html.replace(/^#{1,6}\s+/gm, '');
+  return html;
 }
 
 function escapeMarkdown(text) {

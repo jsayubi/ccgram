@@ -31,8 +31,14 @@ async function main() {
   // If we output "allow" here, Claude Code bypasses the interactive
   // question UI entirely. This hook only sends the Telegram notification
   // for remote answering. Permission is handled by the PermissionRequest hook.
+  //
+  // We delay 2s so the permission notification (from PermissionRequest hook)
+  // appears first in Telegram. The user must click Allow before answering.
 
   const raw = await readStdin();
+
+  // Delay so permission notification appears first in Telegram
+  await new Promise(r => setTimeout(r, 2000));
   let payload;
   try {
     payload = JSON.parse(raw);
@@ -53,11 +59,15 @@ async function main() {
   // Detect tmux session for keystroke injection
   const tmuxSession = detectTmuxSession();
 
+  const totalQuestions = questions.length;
+
   // Process each question (usually just one)
-  for (const q of questions) {
+  for (let qi = 0; qi < questions.length; qi++) {
+    const q = questions[qi];
     const promptId = generatePromptId(); // Unique ID per question
     const questionText = q.question || 'Question';
     const options = q.options || [];
+    const isLast = qi === totalQuestions - 1;
 
     let messageText = `❓ *Question* — ${escapeMarkdown(workspace)}\n\n${escapeMarkdown(questionText)}`;
 
@@ -87,6 +97,7 @@ async function main() {
         tmuxSession,
         questionText,
         options: options.map(o => o.label),
+        isLast,
       });
 
       // Send Telegram message with inline keyboard

@@ -485,6 +485,14 @@ async function processCallbackQuery(query) {
         await sleep(100);
       }
       await tmuxExec(`tmux send-keys -t ${pending.tmuxSession} Enter`);
+
+      // For multi-question flows: after the last question, send an extra
+      // Enter to confirm the preview/submit step
+      if (pending.isLast) {
+        await sleep(500);
+        await tmuxExec(`tmux send-keys -t ${pending.tmuxSession} Enter`);
+      }
+
       await answerCallbackQuery(query.id, `Selected: ${optionLabel}`);
     } catch (err) {
       logger.error(`Failed to inject tmux keystroke: ${err.message}`);

@@ -49,6 +49,15 @@ async function main() {
   }
 
   const toolName = payload.tool_name || 'Unknown';
+
+  // AskUserQuestion: exit silently so Claude Code shows the interactive
+  // question/permission UI in the terminal. The question-notify.js PreToolUse
+  // hook sends the Telegram notification. Clicking an option injects arrow
+  // keys + Enter which both selects the answer AND grants permission.
+  if (toolName === 'AskUserQuestion') {
+    return;
+  }
+
   const toolInput = payload.tool_input || {};
   const cwd = payload.cwd || process.cwd();
   const workspace = extractWorkspaceName(cwd);

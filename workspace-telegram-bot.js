@@ -501,6 +501,56 @@ async function processCallbackQuery(query) {
 
     cleanPrompt(promptId);
 
+  } else if (type === 'qperm') {
+    // Combined question+permission: allow permission AND inject answer keystroke
+    const optionNumber = action; // "1", "2", etc.
+    const pending = readPending(promptId);
+
+    if (!pending) {
+      await answerCallbackQuery(query.id, 'Session not found');
+      return;
+    }
+
+    const optionLabel = pending.options && pending.options[parseInt(optionNumber, 10) - 1]
+      ? pending.options[parseInt(optionNumber, 10) - 1]
+      : `Option ${optionNumber}`;
+
+    // 1. Write permission response (allow) — unblocks the permission hook
+    try {
+      writeResponse(promptId, { action: 'allow', selectedOption: optionNumber });
+      logger.info(`Wrote qperm response for promptId=${promptId}: option=${optionNumber}`);
+      await answerCallbackQuery(query.id, `Selected: ${optionLabel}`);
+    } catch (err) {
+      logger.error(`Failed to write qperm response: ${err.message}`);
+      await answerCallbackQuery(query.id, 'Failed to save response');
+      return;
+    }
+
+    // 2. Schedule keystroke injection after a delay (wait for question UI to appear)
+    if (pending.tmuxSession) {
+      const tmux = pending.tmuxSession;
+      const downPresses = parseInt(optionNumber, 10) - 1;
+      setTimeout(async () => {
+        try {
+          for (let i = 0; i < downPresses; i++) {
+            await tmuxExec(`tmux send-keys -t ${tmux} Down`);
+            await sleep(100);
+          }
+          await tmuxExec(`tmux send-keys -t ${tmux} Enter`);
+          logger.info(`Injected question answer into ${tmux}: option ${optionNumber}`);
+        } catch (err) {
+          logger.error(`Failed to inject question answer: ${err.message}`);
+        }
+      }, 4000); // 4s delay for permission hook to return + question UI to render
+    }
+
+    // Edit message to show selection
+    try {
+      await editMessageText(chatId, messageId, `${originalText}\n\n— Selected: *${escapeMarkdown(optionLabel)}*`);
+    } catch (err) {
+      logger.error(`Failed to edit message: ${err.message}`);
+    }
+
   } else {
     await answerCallbackQuery(query.id, 'Unknown action');
   }

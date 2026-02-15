@@ -28,10 +28,9 @@ const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
 async function main() {
   // NOTE: We intentionally do NOT output permissionDecision to stdout.
-  // AskUserQuestion is in the permissions allow list (settings.json), so
-  // Claude Code will allow it automatically. If we output "allow" here,
-  // Claude Code bypasses the interactive question UI entirely.
-  // This hook only sends the Telegram notification for remote answering.
+  // If we output "allow" here, Claude Code bypasses the interactive
+  // question UI entirely. This hook only sends the Telegram notification
+  // for remote answering. Permission is handled by the PermissionRequest hook.
 
   const raw = await readStdin();
   let payload;
@@ -120,7 +119,6 @@ async function main() {
       }
     }
   }
-
 }
 
 // ── Telegram ────────────────────────────────────────────────────

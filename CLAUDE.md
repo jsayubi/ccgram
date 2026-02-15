@@ -91,7 +91,8 @@ If `permissionDecision: "allow"` is returned, Claude Code bypasses the question 
 - `/compact [workspace]` - Compact context in workspace (injects `/compact` slash command)
 - `/new [project]` - Start Claude in a project directory (shows recent projects if no arg; scans ~/projects/ and ~/tools/ directories, merges with history, pins `assistant` and `claude-remote` at top)
 - `/sessions` - List active sessions (shows default workspace)
-- `/status <workspace>` - Show tmux pane output
+- `/status [workspace]` - Show tmux pane output (HTML formatted, defaults to default workspace)
+- `/stop [workspace]` - Interrupt running prompt (sends Ctrl+C to tmux)
 - `/cmd <TOKEN> <command>` - Direct token-based command
 - `/help` - Show help
 
@@ -104,7 +105,7 @@ If `permissionDecision: "allow"` is returned, Claude Code bypasses the question 
 **Reply-to routing**: Replying to any bot notification (permission, question, status, or confirmation) routes the reply text to that notification's workspace. All hooks track their sent `message_id` in `src/data/message-workspace-map.json`.
 
 **Routing priority** (in `processMessage()`):
-1. Built-in commands: `/help`, `/start`, `/sessions`, `/status`, `/use`, `/compact`
+1. Built-in commands: `/help`, `/start`, `/sessions`, `/status`, `/stop`, `/use`, `/compact`
 2. `/new [project]` — start Claude in a project directory
 3. `/cmd TOKEN command` — direct token routing
 4. `/<workspace> command` — prefix-resolved workspace routing

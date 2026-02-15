@@ -60,14 +60,8 @@ Claude Code Hooks  -->  Hook Scripts  -->  Telegram Bot  -->  User
 ```
 
 ### PreToolUse (question-notify.js)
-```json
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PreToolUse",
-    "permissionDecision": "allow" | "deny" | "ask"
-  }
-}
-```
+No stdout output — intentionally omitted so Claude Code shows the interactive question UI.
+If `permissionDecision: "allow"` is returned, Claude Code bypasses the question UI entirely.
 
 ## IPC Flow (Permission)
 
@@ -79,11 +73,13 @@ Claude Code Hooks  -->  Hook Scripts  -->  Telegram Bot  -->  User
 6. Hook reads response, outputs decision to stdout
 7. Claude Code reads stdout and applies decision
 
-## IPC Flow (Question)
+## IPC Flow (Question / AskUserQuestion)
 
-1. `question-notify.js` sends Telegram message with option buttons
-2. Returns `"allow"` immediately (non-blocking)
-3. Bot receives callback, injects option number via `tmux send-keys -t SESSION 'N' C-m`
+1. `permission-hook.js` exits silently for AskUserQuestion (no stdout), so Claude Code shows the combined question/permission UI in the terminal
+2. `question-notify.js` sends Telegram message(s) with option buttons (no stdout output, 2s delay so permission UI renders first)
+3. User taps an option in Telegram → bot injects arrow Down keys + Enter via tmux (selects answer AND grants permission in one action)
+4. For multi-question flows: last question's callback sends an extra Enter to submit the preview/confirmation step
+5. Pending files include `isLast` flag to track the final question in a batch
 
 ## Telegram Bot Commands
 
@@ -118,7 +114,8 @@ Claude Code Hooks  -->  Hook Scripts  -->  Telegram Bot  -->  User
 
 Telegram inline keyboard callbacks use: `type:promptId:action`
 - `perm:<id>:allow|deny|always` - Permission responses (writes response file)
-- `opt:<id>:N` - Question option N (injects tmux keystroke)
+- `opt:<id>:N` - Question option N (injects arrow Down keys + Enter via tmux)
+- `qperm:<id>:N` - Combined permission+question (writes permission response + delayed keystroke injection)
 
 ## Development
 
@@ -150,6 +147,8 @@ tail -f logs/permission-hook-debug.log
 - Do NOT use `process.exit(0)` after writing to stdout in hooks - it truncates pipe buffers. Let the process exit naturally.
 - Always destroy `process.stdin` in hooks to prevent the event loop from hanging.
 - PermissionRequest uses `decision.behavior`, PreToolUse uses `permissionDecision` - they are DIFFERENT formats.
+- **AskUserQuestion special case**: PermissionRequest hook MUST exit silently (no stdout) for AskUserQuestion. Returning `"allow"` causes Claude Code to auto-complete the question with empty answers. The question/permission UI is combined — arrow keys + Enter both selects the answer and grants permission.
+- **PreToolUse for AskUserQuestion**: Do NOT output `permissionDecision: "allow"` — it bypasses the interactive question UI entirely.
 - The `readStdin()` pattern needs a 500ms timeout with `stdin.destroy()` and double-resolve guard.
 - Telegram callback_data has a 64-byte limit - keep `type:id:action` format compact.
 

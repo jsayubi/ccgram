@@ -22,7 +22,7 @@ Claude Code Hooks  -->  Hook Scripts  -->  Telegram Bot  -->  User
 |------|-----------|-------|---------|
 | `permission-hook.js` | PermissionRequest | Blocking | Permission approval via Telegram buttons |
 | `question-notify.js` | PreToolUse (AskUserQuestion) | Non-blocking | Question notifications with option buttons |
-| `enhanced-hook-notify.js` | Stop, Notification | Non-blocking | Status notifications (completed/waiting) |
+| `enhanced-hook-notify.js` | Stop, Notification | Non-blocking | Status notifications (completed/waiting) with response text from transcript (HTML formatted) |
 | `claude-hook-notify.js` | (legacy) | Non-blocking | Multi-channel notification fallback |
 
 ### Core Modules

@@ -67,7 +67,9 @@ async function main() {
     let message = `${icon} ${label} in <b>${escapeHtml(workspace)}</b>`;
 
     // Extract response text from transcript file
+    // Brief delay to let Claude Code flush the current response to the transcript
     if (payload.transcript_path) {
+      await new Promise(r => setTimeout(r, 1500));
       try {
         const responseText = extractLastResponse(payload.transcript_path);
         if (responseText) {

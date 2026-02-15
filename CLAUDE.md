@@ -43,7 +43,7 @@ Claude Code Hooks  -->  Hook Scripts  -->  Telegram Bot  -->  User
 | `src/data/session-map.json` | Workspace-to-tmux session mapping |
 | `src/data/default-workspace.json` | Persisted default workspace for `/use` command |
 | `src/data/message-workspace-map.json` | Telegram message_id → workspace mapping for reply-to routing (24h TTL) |
-| `src/data/project-history.json` | Persistent project usage history `{ name: { path, lastUsed } }` — survives session expiry/pruning |
+| `src/data/project-history.json` | Persistent project usage history `{ name: { path, lastUsed } }` — merged with directory scan results |
 | `/tmp/claude-prompts/` | Runtime IPC directory (auto-cleaned after 5 min) |
 
 ## Hook Output Formats
@@ -89,7 +89,7 @@ If `permissionDecision: "allow"` is returned, Claude Code bypasses the question 
 - `/use` - Show current default workspace
 - `/use clear` / `/use none` - Clear default workspace
 - `/compact [workspace]` - Compact context in workspace (injects `/compact` slash command)
-- `/new [project]` - Start Claude in a project directory (shows recent projects if no arg; searches ~/projects/, ~/, ~/tools/)
+- `/new [project]` - Start Claude in a project directory (shows recent projects if no arg; scans ~/projects/ and ~/tools/ directories, merges with history, pins `assistant` and `claude-remote` at top)
 - `/sessions` - List active sessions (shows default workspace)
 - `/status <workspace>` - Show tmux pane output
 - `/cmd <TOKEN> <command>` - Direct token-based command

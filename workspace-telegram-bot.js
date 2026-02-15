@@ -16,6 +16,7 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env'), quiet: true });
 
 const https = require('https');
+const fs = require('fs');
 const { exec } = require('child_process');
 const {
   resolveWorkspace,
@@ -28,6 +29,9 @@ const {
   setDefaultWorkspace,
   trackNotificationMessage,
   getWorkspaceForMessage,
+  upsertSession,
+  recordProjectUsage,
+  getRecentProjects,
 } = require('./workspace-router');
 const {
   writeResponse,
@@ -140,6 +144,7 @@ async function handleHelp() {
     '`/use` — Show current default',
     '`/use clear` — Clear default',
     '`/compact [workspace]` — Compact context in workspace',
+    '`/new [project]` — Start Claude in a project (shows recent if no arg)',
     '`/sessions` — List active sessions',
     '`/status <workspace>` — Show tmux output',
     '`/cmd <TOKEN> <command>` — Token-based fallback',
@@ -368,6 +373,136 @@ async function handleCompact(workspaceArg) {
   }
 }
 
+async function handleNew(nameArg) {
+  if (!nameArg) {
+    const recent = getRecentProjects(10);
+    if (recent.length === 0) {
+      await sendMessage('No project history yet.\n\nUse `/new <project-name>` to start.\nSearches: `~/projects/<name>`, `~/<name>`, `~/tools/<name>`');
+      return;
+    }
+    const keyboard = [];
+    for (let i = 0; i < recent.length; i += 2) {
+      const row = recent.slice(i, i + 2).map(p => ({
+        text: p.name,
+        callback_data: `new:${p.name}`,
+      }));
+      keyboard.push(row);
+    }
+    await telegramAPI('sendMessage', {
+      chat_id: CHAT_ID,
+      text: '*Start Claude Session*\n\nSelect a project or use `/new <name>`:',
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: keyboard },
+    });
+    return;
+  }
+  await startProject(nameArg);
+}
+
+async function startProject(name) {
+  const home = process.env.HOME;
+
+  // 1. Find project directory — exact match first
+  const candidates = [
+    path.join(home, 'projects', name),
+    path.join(home, name),
+    path.join(home, 'tools', name),
+  ];
+  let projectDir = null;
+  for (const dir of candidates) {
+    try { if (fs.statSync(dir).isDirectory()) { projectDir = dir; break; } }
+    catch {}
+  }
+
+  // 2. If no exact match, prefix match against ~/projects/ and ~/tools/ ONLY
+  //    (skip ~/ to avoid matching Desktop, Documents, Downloads, Library, etc.)
+  if (!projectDir) {
+    const searchDirs = [
+      path.join(home, 'projects'),
+      path.join(home, 'tools'),
+    ];
+    const matches = [];
+    for (const base of searchDirs) {
+      try {
+        const entries = fs.readdirSync(base, { withFileTypes: true });
+        for (const e of entries) {
+          if (e.isDirectory() && e.name.toLowerCase().startsWith(name.toLowerCase())) {
+            matches.push({ name: e.name, path: path.join(base, e.name) });
+          }
+        }
+      } catch {}
+    }
+    // Deduplicate by name (prefer ~/projects/ over ~/tools/)
+    const unique = [...new Map(matches.map(m => [m.name, m])).values()];
+
+    if (unique.length === 1) {
+      projectDir = unique[0].path;
+      name = unique[0].name;
+    } else if (unique.length > 1) {
+      // Show matches as inline buttons (max 10)
+      const limited = unique.slice(0, 10);
+      const keyboard = [];
+      for (let i = 0; i < limited.length; i += 2) {
+        keyboard.push(limited.slice(i, i + 2).map(m => ({
+          text: m.name, callback_data: `new:${m.name}`,
+        })));
+      }
+      await telegramAPI('sendMessage', {
+        chat_id: CHAT_ID,
+        text: `Multiple matches for *${escapeMarkdown(name)}*:`,
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: keyboard },
+      });
+      return;
+    }
+  }
+
+  if (!projectDir) {
+    await sendMessage(`Project \`${escapeMarkdown(name)}\` not found.\n\nSearched: ~/projects/, ~/, ~/tools/`);
+    return;
+  }
+
+  // 3. Sanitize tmux session name (dots, colons, spaces are invalid in tmux)
+  const tmuxName = name.replace(/[.:\s]/g, '-');
+
+  // 4. Check if tmux session already exists
+  try {
+    await tmuxExec(`tmux has-session -t "${tmuxName}" 2>/dev/null`);
+    // Already running — just register, set default, tell user
+    upsertSession({ cwd: projectDir, tmuxSession: tmuxName, status: 'waiting', sessionId: null });
+    recordProjectUsage(name, projectDir);
+    setDefaultWorkspace(name);
+    await sendMessage(`Session \`${tmuxName}\` already running.\nSet as default — send messages directly.`);
+    return;
+  } catch {} // Doesn't exist — create it
+
+  // 5. Create tmux session and start claude
+  try {
+    await tmuxExec(`tmux new-session -d -s "${tmuxName}" -c "${projectDir}"`);
+    await sleep(300);
+    await tmuxExec(`tmux send-keys -t "${tmuxName}" 'claude' C-m`);
+  } catch (err) {
+    await sendMessage(`Failed to start session: ${err.message}`);
+    return;
+  }
+
+  // 6. Pre-register session + record history + set as default
+  upsertSession({ cwd: projectDir, tmuxSession: tmuxName, status: 'starting', sessionId: null });
+  recordProjectUsage(name, projectDir);
+  setDefaultWorkspace(name);
+
+  // 7. Track confirmation message for reply-to routing
+  const msg = await sendMessage(
+    `Started Claude in *${escapeMarkdown(name)}*\n\n` +
+    `*Path:* \`${projectDir}\`\n` +
+    `*Session:* \`${tmuxName}\`\n\n` +
+    `Default workspace set — send messages directly.`
+  );
+  if (msg && msg.message_id) {
+    trackNotificationMessage(msg.message_id, name, 'new-session');
+  }
+}
+
 async function injectAndRespond(session, command, workspace) {
   const tmuxName = session.tmuxSession;
 
@@ -425,12 +560,25 @@ async function processCallbackQuery(query) {
   logger.info(`Callback: ${data}`);
 
   const parts = data.split(':');
+  const type = parts[0];
+
+  // Handle new: callback (format: new:<projectName>)
+  if (type === 'new') {
+    const projectName = parts.slice(1).join(':'); // rejoin in case name had colons
+    await answerCallbackQuery(query.id, `Starting ${projectName}...`);
+    try {
+      await editMessageText(chatId, messageId, `${originalText}\n\n— Starting *${escapeMarkdown(projectName)}*...`);
+    } catch {}
+    await startProject(projectName);
+    return;
+  }
+
   if (parts.length < 3) {
     await answerCallbackQuery(query.id, 'Invalid callback');
     return;
   }
 
-  const [type, promptId, action] = parts;
+  const [, promptId, action] = parts;
 
   if (type === 'perm') {
     // Permission response: write response file for the polling hook
@@ -609,6 +757,13 @@ async function processMessage(msg) {
   const compactMatch = text.match(/^\/compact(?:\s+(\S+))?$/);
   if (compactMatch) {
     await handleCompact(compactMatch[1] || null);
+    return;
+  }
+
+  // /new [project]
+  const newMatch = text.match(/^\/new(?:\s+(.+))?$/);
+  if (newMatch) {
+    await handleNew(newMatch[1] ? newMatch[1].trim() : null);
     return;
   }
 

@@ -43,6 +43,7 @@ Claude Code Hooks  -->  Hook Scripts  -->  Telegram Bot  -->  User
 | `src/data/session-map.json` | Workspace-to-tmux session mapping |
 | `src/data/default-workspace.json` | Persisted default workspace for `/use` command |
 | `src/data/message-workspace-map.json` | Telegram message_id → workspace mapping for reply-to routing (24h TTL) |
+| `src/data/project-history.json` | Persistent project usage history `{ name: { path, lastUsed } }` — survives session expiry/pruning |
 | `/tmp/claude-prompts/` | Runtime IPC directory (auto-cleaned after 5 min) |
 
 ## Hook Output Formats
@@ -88,6 +89,7 @@ If `permissionDecision: "allow"` is returned, Claude Code bypasses the question 
 - `/use` - Show current default workspace
 - `/use clear` / `/use none` - Clear default workspace
 - `/compact [workspace]` - Compact context in workspace (injects `/compact` slash command)
+- `/new [project]` - Start Claude in a project directory (shows recent projects if no arg; searches ~/projects/, ~/, ~/tools/)
 - `/sessions` - List active sessions (shows default workspace)
 - `/status <workspace>` - Show tmux pane output
 - `/cmd <TOKEN> <command>` - Direct token-based command
@@ -103,12 +105,13 @@ If `permissionDecision: "allow"` is returned, Claude Code bypasses the question 
 
 **Routing priority** (in `processMessage()`):
 1. Built-in commands: `/help`, `/start`, `/sessions`, `/status`, `/use`, `/compact`
-2. `/cmd TOKEN command` — direct token routing
-3. `/<workspace> command` — prefix-resolved workspace routing
-4. `/<workspace>` (bare) — prefix-resolved status
-5. Plain text with reply-to a tracked message — route to that workspace
-6. Plain text with default workspace set — route there
-7. Plain text fallback — show help hint
+2. `/new [project]` — start Claude in a project directory
+3. `/cmd TOKEN command` — direct token routing
+4. `/<workspace> command` — prefix-resolved workspace routing
+5. `/<workspace>` (bare) — prefix-resolved status
+6. Plain text with reply-to a tracked message — route to that workspace
+7. Plain text with default workspace set — route there
+8. Plain text fallback — show help hint
 
 ## Callback Data Format
 
@@ -116,6 +119,7 @@ Telegram inline keyboard callbacks use: `type:promptId:action`
 - `perm:<id>:allow|deny|always` - Permission responses (writes response file)
 - `opt:<id>:N` - Question option N (injects arrow Down keys + Enter via tmux)
 - `qperm:<id>:N` - Combined permission+question (writes permission response + delayed keystroke injection)
+- `new:<projectName>` - Start Claude session in a project directory
 
 ## Development
 

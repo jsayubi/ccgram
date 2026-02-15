@@ -145,6 +145,7 @@ function upsertSession({ cwd, tmuxSession, status, sessionId }) {
   };
 
   writeSessionMap(map);
+  recordProjectUsage(workspace, cwd);
   return { token, workspace };
 }
 
@@ -319,6 +320,34 @@ function getWorkspaceForMessage(messageId) {
   return entry.workspace;
 }
 
+// ── Project History (persists across session expiry/pruning) ─────
+
+const PROJECT_HISTORY_PATH = path.join(__dirname, 'src/data/project-history.json');
+
+function readProjectHistory() {
+  try {
+    return JSON.parse(fs.readFileSync(PROJECT_HISTORY_PATH, 'utf8'));
+  } catch { return {}; }
+}
+
+function recordProjectUsage(name, projectPath) {
+  const history = readProjectHistory();
+  history[name] = { path: projectPath, lastUsed: Date.now() };
+  const entries = Object.entries(history).sort((a, b) => b[1].lastUsed - a[1].lastUsed);
+  const trimmed = Object.fromEntries(entries.slice(0, 50));
+  const dir = path.dirname(PROJECT_HISTORY_PATH);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(PROJECT_HISTORY_PATH, JSON.stringify(trimmed, null, 2), 'utf8');
+}
+
+function getRecentProjects(limit = 10) {
+  const history = readProjectHistory();
+  return Object.entries(history)
+    .sort((a, b) => b[1].lastUsed - a[1].lastUsed)
+    .slice(0, limit)
+    .map(([name, data]) => ({ name, path: data.path }));
+}
+
 module.exports = {
   extractWorkspaceName,
   readSessionMap,
@@ -333,5 +362,7 @@ module.exports = {
   setDefaultWorkspace,
   trackNotificationMessage,
   getWorkspaceForMessage,
+  recordProjectUsage,
+  getRecentProjects,
   SESSION_MAP_PATH,
 };

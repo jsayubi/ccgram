@@ -11,7 +11,6 @@
  *   node /Users/aliayubi/tools/claude-remote/enhanced-hook-notify.js waiting
  */
 
-const fs = require('fs');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env'), quiet: true });
 
@@ -66,19 +65,22 @@ async function main() {
     const label = STATUS_ARG === 'completed' ? 'Task completed' : 'Waiting for input';
     let message = `${icon} ${label} in *${escapeMarkdown(workspace)}*`;
 
-    // Extract Claude's last response from the transcript file
-    if (payload.transcript_path) {
-      try {
-        const responseText = extractLastResponse(payload.transcript_path);
-        if (responseText) {
-          const truncated = responseText.length > 3000
-            ? responseText.slice(0, 2997) + '...'
-            : responseText;
-          message += `\n\n${escapeMarkdown(truncated)}`;
+    // Capture tmux pane output to include Claude's response
+    const tmuxName = tmuxSession || `claude-${workspace}`;
+    try {
+      const paneOutput = await captureTmuxPane(tmuxName);
+      if (paneOutput) {
+        const cleaned = cleanTmuxOutput(paneOutput);
+        if (cleaned) {
+          // Telegram message limit is 4096 chars; keep output under 3000
+          const truncated = cleaned.length > 3000
+            ? '...' + cleaned.slice(-2997)
+            : cleaned;
+          message += `\n\n${truncated}`;
         }
-      } catch (err) {
-        console.error(`[hook-notify] transcript read error: ${err.message}`);
       }
+    } catch (err) {
+      // tmux capture failed — send notification without output
     }
 
     try {
@@ -87,27 +89,20 @@ async function main() {
         trackNotificationMessage(result.message_id, workspace, `hook-${STATUS_ARG}`);
       }
     } catch (err) {
-      // Markdown parse failed — retry without parse_mode
-      try {
-        const plainMsg = message.replace(/[*_`\[\]]/g, '');
-        const result = await sendTelegram(plainMsg, false);
-        if (result && result.message_id) {
-          trackNotificationMessage(result.message_id, workspace, `hook-${STATUS_ARG}`);
-        }
-      } catch (err2) {
-        console.error(`[hook-notify] Telegram send failed: ${err2.message}`);
-      }
+      console.error(`[hook-notify] Telegram send failed: ${err.message}`);
     }
   }
 }
 
 // ── Telegram ────────────────────────────────────────────────────
 
-function sendTelegram(text, useMarkdown = true) {
+function sendTelegram(text) {
   return new Promise((resolve, reject) => {
-    const payload = { chat_id: CHAT_ID, text };
-    if (useMarkdown) payload.parse_mode = 'Markdown';
-    const body = JSON.stringify(payload);
+    const body = JSON.stringify({
+      chat_id: CHAT_ID,
+      text,
+      parse_mode: 'Markdown',
+    });
 
     const options = {
       hostname: 'api.telegram.org',
@@ -150,27 +145,6 @@ function sendTelegram(text, useMarkdown = true) {
 
 // ── Helpers ──────────────────────────────────────────────────────
 
-function extractLastResponse(transcriptPath) {
-  const data = fs.readFileSync(transcriptPath, 'utf8').trimEnd();
-  const lines = data.split('\n');
-
-  // Walk backwards to find the last assistant message with text content
-  for (let i = lines.length - 1; i >= 0; i--) {
-    try {
-      const entry = JSON.parse(lines[i]);
-      if (entry.type === 'assistant' && entry.message?.content) {
-        const texts = entry.message.content
-          .filter(c => c.type === 'text')
-          .map(c => c.text);
-        if (texts.length > 0) {
-          return texts.join('\n\n');
-        }
-      }
-    } catch {}
-  }
-  return null;
-}
-
 function readStdin() {
   return new Promise((resolve) => {
     let data = '';
@@ -192,6 +166,21 @@ function readStdin() {
   });
 }
 
+function captureTmuxPane(sessionName) {
+  const { execSync } = require('child_process');
+  return new Promise((resolve) => {
+    try {
+      const output = execSync(`tmux capture-pane -t ${sessionName} -p 2>/dev/null`, {
+        encoding: 'utf8',
+        timeout: 3000,
+      });
+      resolve(output);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
 function detectTmuxSession() {
   // If running inside tmux, grab the session name
   if (process.env.TMUX) {
@@ -203,6 +192,125 @@ function detectTmuxSession() {
     }
   }
   return null;
+}
+
+/**
+ * Clean raw tmux pane output into readable Telegram text.
+ * Strips ANSI codes, terminal UI chrome, and extracts Claude's last response.
+ * Preserves paragraph breaks (blank lines) for readability.
+ */
+function cleanTmuxOutput(raw) {
+  let lines = raw.split('\n');
+
+  // Strip ANSI escape codes
+  lines = lines.map(l => l
+    .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')
+    .replace(/\x1B\][^\x07]*\x07/g, '')
+  );
+
+  // Find the last user prompt to isolate Claude's final response.
+  // Walk backwards to find the prompt line (❯ user input).
+  let responseStart = 0;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const trimmed = lines[i].trim();
+    // Match user input prompt: "❯ something" or "> something"
+    if (/^❯\s+\S/.test(trimmed) || /^>\s+\S/.test(trimmed)) {
+      responseStart = i + 1;
+      break;
+    }
+  }
+
+  let response = lines.slice(responseStart);
+
+  // Strip from bottom: remove noise, but capture status bar and toolbar for footer
+  let capturedStatusBar = null;
+  let capturedToolbar = null;
+
+  while (response.length) {
+    const last = response[response.length - 1].trim();
+    if (!last || /^❯\s*$/.test(last)) {
+      // Empty lines and bare prompt — discard
+      response.pop();
+    } else if (/^.+\|.+\|.+\|/.test(last)) {
+      // Status bar: "workspace | model | % left | time | cost" — capture
+      capturedStatusBar = capturedStatusBar || last;
+      response.pop();
+    } else if (/^[▶►]{1,2}\s/.test(last) || /accept edits|shift\+tab to cycle/i.test(last)) {
+      // Toolbar: "▶▶ accept edits on (shift+tab to cycle)" — capture
+      capturedToolbar = capturedToolbar || last;
+      response.pop();
+    } else if (
+      /^Frosting/i.test(last) ||
+      /running\s+(stop\s+)?hooks/i.test(last) ||
+      /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(last) ||
+      /^[·•]\s*(Mulling|Thinking|Reasoning)/i.test(last) ||
+      /^(Clauding|Working|Waiting|Processing)/i.test(last)
+    ) {
+      // Pure noise — discard
+      response.pop();
+    } else {
+      break;
+    }
+  }
+
+  // Clean each line but preserve blank lines for paragraph spacing
+  response = response.map(l => {
+    return l
+      .replace(/^[│┃]\s?/, '')         // box-drawing left borders
+      .replace(/[●◉⬤]\s?/g, '')        // dot indicators
+      .replace(/^\s*[─━═]{3,}\s*$/, '') // horizontal rules
+      .replace(/^\s*\d+\s*\/\s*\d+\s*$/, ''); // pagination "1/3"
+  });
+
+  // Remove lines that are pure noise, but keep blank lines intact
+  response = response.filter(l => {
+    const t = l.trim();
+    // Keep blank lines for paragraph breaks
+    if (!t) return true;
+    // Skip spinners and status indicators
+    if (/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(t)) return false;
+    if (/^(Clauding|Working|Waiting|Processing)/i.test(t)) return false;
+    if (/^Frosting/i.test(t)) return false;
+    if (/running\s+(stop\s+)?hooks/i.test(t)) return false;
+    // Thinking indicators: · Mulling..., · Thinking...
+    if (/^[·•]\s*(Mulling|Thinking|Reasoning)/i.test(t)) return false;
+    // Status bar and toolbar (already captured for footer)
+    if (/^.+\|.+\|.+\|/.test(t)) return false;
+    if (/^[▶►]{1,2}\s/.test(t)) return false;
+    if (/accept edits|shift\+tab to cycle/i.test(t)) return false;
+    return true;
+  });
+
+  // Collapse 3+ consecutive blank lines into 2 (one paragraph break)
+  const collapsed = [];
+  let blankCount = 0;
+  for (const line of response) {
+    if (!line.trim()) {
+      blankCount++;
+      if (blankCount <= 2) collapsed.push(line);
+    } else {
+      blankCount = 0;
+      collapsed.push(line);
+    }
+  }
+
+  // Trim leading/trailing blank lines
+  while (collapsed.length && !collapsed[0].trim()) collapsed.shift();
+  while (collapsed.length && !collapsed[collapsed.length - 1].trim()) collapsed.pop();
+
+  if (collapsed.length === 0 && !capturedStatusBar && !capturedToolbar) return null;
+
+  let result = collapsed.join('\n');
+
+  // Append captured status bar and toolbar as a clean footer
+  if (capturedStatusBar || capturedToolbar) {
+    if (result) result += '\n\n';
+    if (capturedStatusBar) result += `─ ${capturedStatusBar}`;
+    if (capturedStatusBar && capturedToolbar) result += '\n';
+    if (capturedToolbar) result += capturedToolbar;
+  }
+
+  return result || null;
 }
 
 function escapeMarkdown(text) {

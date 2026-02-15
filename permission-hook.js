@@ -303,7 +303,18 @@ function formatToolDescription(toolName, toolInput) {
     return `*Command:* \`${escapeMarkdown(truncated)}\``;
   }
   if (toolName === 'Edit' && toolInput.file_path) {
-    return `*File:* \`${escapeMarkdown(toolInput.file_path)}\``;
+    const filePath = escapeMarkdown(toolInput.file_path);
+    if (toolInput.old_string && toolInput.new_string) {
+      const maxLines = 12;
+      const oldLines = toolInput.old_string.split('\n');
+      const newLines = toolInput.new_string.split('\n');
+      const oldTrunc = oldLines.length > maxLines;
+      const newTrunc = newLines.length > maxLines;
+      const oldStr = oldLines.slice(0, maxLines).map(l => `- ${l}`).join('\n') + (oldTrunc ? '\n  ...' : '');
+      const newStr = newLines.slice(0, maxLines).map(l => `+ ${l}`).join('\n') + (newTrunc ? '\n  ...' : '');
+      return `*File:* \`${filePath}\`\n\`\`\`\n${oldStr}\n${newStr}\n\`\`\``;
+    }
+    return `*File:* \`${filePath}\``;
   }
   if (toolName === 'Write' && toolInput.file_path) {
     return `*File:* \`${escapeMarkdown(toolInput.file_path)}\``;

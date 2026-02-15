@@ -76,7 +76,9 @@ async function main() {
           const truncated = cleaned.length > 3000
             ? '...' + cleaned.slice(-2997)
             : cleaned;
-          message += `\n\n${truncated}`;
+          // Wrap in code block to avoid Markdown parsing issues with tmux output
+          const escaped = truncated.replace(/`/g, "'");
+          message += `\n\n\`\`\`\n${escaped}\n\`\`\``;
         }
       }
     } catch (err) {
@@ -89,20 +91,27 @@ async function main() {
         trackNotificationMessage(result.message_id, workspace, `hook-${STATUS_ARG}`);
       }
     } catch (err) {
-      console.error(`[hook-notify] Telegram send failed: ${err.message}`);
+      // Markdown parse failed — retry without parse_mode
+      try {
+        const plainMsg = message.replace(/[*_`\[\]]/g, '');
+        const result = await sendTelegram(plainMsg, false);
+        if (result && result.message_id) {
+          trackNotificationMessage(result.message_id, workspace, `hook-${STATUS_ARG}`);
+        }
+      } catch (err2) {
+        console.error(`[hook-notify] Telegram send failed: ${err2.message}`);
+      }
     }
   }
 }
 
 // ── Telegram ────────────────────────────────────────────────────
 
-function sendTelegram(text) {
+function sendTelegram(text, useMarkdown = true) {
   return new Promise((resolve, reject) => {
-    const body = JSON.stringify({
-      chat_id: CHAT_ID,
-      text,
-      parse_mode: 'Markdown',
-    });
+    const payload = { chat_id: CHAT_ID, text };
+    if (useMarkdown) payload.parse_mode = 'Markdown';
+    const body = JSON.stringify(payload);
 
     const options = {
       hostname: 'api.telegram.org',

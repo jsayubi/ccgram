@@ -53,6 +53,7 @@ if (!CHAT_ID || CHAT_ID === 'YOUR_CHAT_ID_HERE') {
 }
 
 let lastUpdateId = 0;
+const activeTypingIntervals = new Map(); // workspace → intervalId
 
 const logger = {
   info: (...args) => console.log(new Date().toISOString(), '[INFO]', ...args),
@@ -123,6 +124,47 @@ function sendHtmlMessage(text) {
     text,
     parse_mode: 'HTML',
   });
+}
+
+const TYPING_SIGNAL_DIR = path.join(__dirname, 'src/data');
+
+function typingSignalPath(workspace) {
+  return path.join(TYPING_SIGNAL_DIR, `typing-${workspace}`);
+}
+
+function startTypingIndicator(workspace) {
+  stopTypingIndicator(workspace);
+  // Write signal file so the hook can clear it to stop typing
+  try { fs.writeFileSync(typingSignalPath(workspace), String(Date.now())); } catch {}
+  const tick = () => {
+    // Stop if signal file was removed (by the hook)
+    if (!fs.existsSync(typingSignalPath(workspace))) {
+      stopTypingIndicator(workspace);
+      return;
+    }
+    telegramAPI('sendChatAction', { chat_id: CHAT_ID, action: 'typing' }).catch(() => {});
+  };
+  tick(); // send immediately
+  const intervalId = setInterval(tick, 4500);
+  // Safety timeout: stop after 5 minutes
+  const timeoutId = setTimeout(() => stopTypingIndicator(workspace), 5 * 60 * 1000);
+  activeTypingIntervals.set(workspace, { intervalId, timeoutId });
+}
+
+function stopTypingIndicator(workspace) {
+  const entry = activeTypingIntervals.get(workspace);
+  if (entry) {
+    clearInterval(entry.intervalId);
+    clearTimeout(entry.timeoutId);
+    activeTypingIntervals.delete(workspace);
+  }
+  try { fs.unlinkSync(typingSignalPath(workspace)); } catch {}
+}
+
+function stopAllTypingIndicators() {
+  for (const workspace of [...activeTypingIntervals.keys()]) {
+    stopTypingIndicator(workspace);
+  }
 }
 
 function answerCallbackQuery(callbackQueryId, text) {
@@ -596,12 +638,7 @@ async function injectAndRespond(session, command, workspace) {
     await tmuxExec(`tmux send-keys -t ${tmuxName} '${escapedCommand}'`);
     await sleep(150);
     await tmuxExec(`tmux send-keys -t ${tmuxName} C-m`);
-
-    const sent = await sendMessage(`\u2705 Sent to *${escapeMarkdown(workspace)}*: ${escapeMarkdown(command)}`);
-    // Track the confirmation message so reply-to routing works on it too
-    if (sent && sent.message_id) {
-      trackNotificationMessage(sent.message_id, workspace, 'bot-confirm');
-    }
+    startTypingIndicator(workspace);
     return true;
   } catch (err) {
     await sendMessage(`\u274c Failed: ${err.message}`);
@@ -789,6 +826,7 @@ async function processCallbackQuery(query) {
 // ── Message router ──────────────────────────────────────────────
 
 async function processMessage(msg) {
+  stopAllTypingIndicators();
   // Only accept messages from the configured chat
   const chatId = String(msg.chat.id);
   if (chatId !== String(CHAT_ID)) {

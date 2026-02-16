@@ -98,6 +98,11 @@ async function main() {
         console.error(`[hook-notify] Telegram send failed: ${err2.message}`);
       }
     }
+
+    // Remove typing signal file so the bot stops its typing indicator
+    try {
+      fs.unlinkSync(path.join(__dirname, 'src/data', `typing-${workspace}`));
+    } catch {}
   }
 }
 

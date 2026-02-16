@@ -102,7 +102,7 @@ If `permissionDecision: "allow"` is returned, Claude Code bypasses the question 
 
 **Default workspace**: `/use assistant` sets a default. Plain text messages (no `/` prefix) route to the default workspace automatically.
 
-**Reply-to routing**: Replying to any bot notification (permission, question, status, or confirmation) routes the reply text to that notification's workspace. All hooks track their sent `message_id` in `src/data/message-workspace-map.json`.
+**Reply-to routing**: Replying to any bot notification (permission, question, or status) routes the reply text to that notification's workspace. All hooks track their sent `message_id` in `src/data/message-workspace-map.json`.
 
 **Routing priority** (in `processMessage()`):
 1. Built-in commands: `/help`, `/start`, `/sessions`, `/status`, `/stop`, `/use`, `/compact`
@@ -113,6 +113,8 @@ If `permissionDecision: "allow"` is returned, Claude Code bypasses the question 
 6. Plain text with reply-to a tracked message — route to that workspace
 7. Plain text with default workspace set — route there
 8. Plain text fallback — show help hint
+
+**Typing indicator**: After injecting a command, the bot sends a repeating `sendChatAction: typing` every 4.5s. It stops when: the hook removes the signal file (`src/data/typing-<workspace>`), the user sends a new message, or the 5-minute safety timeout expires.
 
 ## Callback Data Format
 

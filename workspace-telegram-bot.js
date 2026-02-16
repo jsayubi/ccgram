@@ -807,6 +807,8 @@ async function processCallbackQuery(query) {
 
     // Inject keystrokes: iterate each option from top, Space if selected, Down to next
     // Claude Code multi-select UI starts with cursor on first option
+    // After the listed options, Claude Code adds an auto-generated "Other" option,
+    // then Submit. So we need: options.length Downs + 1 more Down to skip "Other"
     try {
       for (let i = 0; i < pending.options.length; i++) {
         if (selected[i]) {
@@ -816,7 +818,10 @@ async function processCallbackQuery(query) {
         await tmuxExec(`tmux send-keys -t ${pending.tmuxSession} Down`);
         await sleep(100);
       }
-      // After iterating all options, cursor is on Submit — press Enter
+      // Skip past the auto-added "Other" option to reach Submit
+      await tmuxExec(`tmux send-keys -t ${pending.tmuxSession} Down`);
+      await sleep(100);
+      // Cursor is now on Submit — press Enter
       await tmuxExec(`tmux send-keys -t ${pending.tmuxSession} Enter`);
 
       // For multi-question flows: extra Enter to confirm

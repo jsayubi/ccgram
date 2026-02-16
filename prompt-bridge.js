@@ -154,9 +154,22 @@ function cleanPrompt(id) {
   try { fs.unlinkSync(response); } catch {}
 }
 
+/**
+ * Update fields on an existing pending prompt file.
+ * @param {string} id — prompt ID
+ * @param {object} updates — fields to merge
+ */
+function updatePending(id, updates) {
+  const existing = readPending(id);
+  if (!existing) return;
+  const filePath = path.join(PROMPTS_DIR, `pending-${id}.json`);
+  fs.writeFileSync(filePath, JSON.stringify({ ...existing, ...updates }, null, 2));
+}
+
 module.exports = {
   generatePromptId,
   writePending,
+  updatePending,
   writeResponse,
   readResponse,
   readPending,

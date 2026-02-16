@@ -37,6 +37,7 @@ const {
 const {
   writeResponse,
   readPending,
+  updatePending,
   cleanPrompt,
 } = require('./prompt-bridge');
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -126,45 +127,32 @@ function sendHtmlMessage(text) {
   });
 }
 
-const TYPING_SIGNAL_DIR = path.join(__dirname, 'src/data');
+const TYPING_SIGNAL_PATH = path.join(__dirname, 'src/data', 'typing-active');
 
-function typingSignalPath(workspace) {
-  return path.join(TYPING_SIGNAL_DIR, `typing-${workspace}`);
-}
-
-function startTypingIndicator(workspace) {
-  stopTypingIndicator(workspace);
-  // Write signal file so the hook can clear it to stop typing
-  try { fs.writeFileSync(typingSignalPath(workspace), String(Date.now())); } catch {}
+function startTypingIndicator() {
+  stopTypingIndicator();
+  try { fs.writeFileSync(TYPING_SIGNAL_PATH, String(Date.now())); } catch {}
   const tick = () => {
-    // Stop if signal file was removed (by the hook)
-    if (!fs.existsSync(typingSignalPath(workspace))) {
-      stopTypingIndicator(workspace);
+    if (!fs.existsSync(TYPING_SIGNAL_PATH)) {
+      stopTypingIndicator();
       return;
     }
     telegramAPI('sendChatAction', { chat_id: CHAT_ID, action: 'typing' }).catch(() => {});
   };
-  tick(); // send immediately
+  tick();
   const intervalId = setInterval(tick, 4500);
-  // Safety timeout: stop after 5 minutes
-  const timeoutId = setTimeout(() => stopTypingIndicator(workspace), 5 * 60 * 1000);
-  activeTypingIntervals.set(workspace, { intervalId, timeoutId });
+  const timeoutId = setTimeout(() => stopTypingIndicator(), 5 * 60 * 1000);
+  activeTypingIntervals.set('_active', { intervalId, timeoutId });
 }
 
-function stopTypingIndicator(workspace) {
-  const entry = activeTypingIntervals.get(workspace);
+function stopTypingIndicator() {
+  const entry = activeTypingIntervals.get('_active');
   if (entry) {
     clearInterval(entry.intervalId);
     clearTimeout(entry.timeoutId);
-    activeTypingIntervals.delete(workspace);
+    activeTypingIntervals.delete('_active');
   }
-  try { fs.unlinkSync(typingSignalPath(workspace)); } catch {}
-}
-
-function stopAllTypingIndicators() {
-  for (const workspace of [...activeTypingIntervals.keys()]) {
-    stopTypingIndicator(workspace);
-  }
+  try { fs.unlinkSync(TYPING_SIGNAL_PATH); } catch {}
 }
 
 function answerCallbackQuery(callbackQueryId, text) {
@@ -174,13 +162,15 @@ function answerCallbackQuery(callbackQueryId, text) {
   });
 }
 
-function editMessageText(chatId, messageId, text) {
-  return telegramAPI('editMessageText', {
+function editMessageText(chatId, messageId, text, replyMarkup) {
+  const body = {
     chat_id: chatId,
     message_id: messageId,
     text,
     parse_mode: 'Markdown',
-  });
+  };
+  if (replyMarkup) body.reply_markup = replyMarkup;
+  return telegramAPI('editMessageText', body);
 }
 
 // ── Command handlers ────────────────────────────────────────────
@@ -638,7 +628,7 @@ async function injectAndRespond(session, command, workspace) {
     await tmuxExec(`tmux send-keys -t ${tmuxName} '${escapedCommand}'`);
     await sleep(150);
     await tmuxExec(`tmux send-keys -t ${tmuxName} C-m`);
-    startTypingIndicator(workspace);
+    startTypingIndicator();
     return true;
   } catch (err) {
     await sendMessage(`\u274c Failed: ${err.message}`);
@@ -684,12 +674,13 @@ async function processCallbackQuery(query) {
     return;
   }
 
-  if (parts.length < 3) {
+  if (parts.length < 3 && type !== 'opt-submit') {
     await answerCallbackQuery(query.id, 'Invalid callback');
     return;
   }
 
-  const [, promptId, action] = parts;
+  const promptId = parts[1];
+  const action = parts[2]; // undefined for opt-submit, which is fine
 
   if (type === 'perm') {
     // Permission response: write response file for the polling hook
@@ -730,14 +721,43 @@ async function processCallbackQuery(query) {
       return;
     }
 
-    const optionLabel = pending.options && pending.options[parseInt(optionNumber, 10) - 1]
-      ? pending.options[parseInt(optionNumber, 10) - 1]
+    const optIdx = parseInt(optionNumber, 10) - 1;
+    const optionLabel = pending.options && pending.options[optIdx]
+      ? pending.options[optIdx]
       : `Option ${optionNumber}`;
 
-    // Inject option selection via arrow keys + Enter into tmux
-    // Claude Code's AskUserQuestion UI uses an interactive selector:
-    // first option is pre-highlighted, so Down (N-1) times + Enter
-    const downPresses = parseInt(optionNumber, 10) - 1;
+    // Multi-select: toggle selection state, update buttons, don't submit yet
+    if (pending.multiSelect) {
+      const selected = pending.selectedOptions || pending.options.map(() => false);
+      selected[optIdx] = !selected[optIdx];
+      updatePending(promptId, { selectedOptions: selected });
+
+      // Rebuild keyboard with updated checkboxes
+      const buttons = pending.options.map((label, idx) => ({
+        text: `${selected[idx] ? '☑' : '☐'} ${idx + 1}. ${label}`,
+        callback_data: `opt:${promptId}:${idx + 1}`,
+      }));
+      const keyboard = [];
+      for (let i = 0; i < buttons.length; i += 2) {
+        keyboard.push(buttons.slice(i, i + 2));
+      }
+      keyboard.push([{ text: '✅ Submit', callback_data: `opt-submit:${promptId}` }]);
+
+      const checkLabel = selected[optIdx] ? '☑' : '☐';
+      await answerCallbackQuery(query.id, `${checkLabel} ${optionLabel}`);
+
+      // Edit message to show updated buttons
+      try {
+        await editMessageText(chatId, messageId, originalText, { inline_keyboard: keyboard });
+      } catch (err) {
+        logger.error(`Failed to edit message: ${err.message}`);
+      }
+      return;
+    }
+
+    // Single-select: inject arrow keys + Enter into tmux
+    // Claude Code's AskUserQuestion UI: first option pre-highlighted, Down (N-1) times + Enter
+    const downPresses = optIdx;
     try {
       for (let i = 0; i < downPresses; i++) {
         await tmuxExec(`tmux send-keys -t ${pending.tmuxSession} Down`);
@@ -762,6 +782,60 @@ async function processCallbackQuery(query) {
     // Edit message to show selection and remove buttons
     try {
       await editMessageText(chatId, messageId, `${originalText}\n\n— Selected: *${escapeMarkdown(optionLabel)}*`);
+    } catch (err) {
+      logger.error(`Failed to edit message: ${err.message}`);
+    }
+
+    cleanPrompt(promptId);
+
+  } else if (type === 'opt-submit') {
+    // Multi-select submit: inject Space toggles for selected options, then Enter
+    const pending = readPending(promptId);
+
+    if (!pending || !pending.tmuxSession) {
+      await answerCallbackQuery(query.id, 'Session not found');
+      return;
+    }
+
+    const selected = pending.selectedOptions || [];
+    const selectedLabels = pending.options.filter((_, idx) => selected[idx]);
+
+    if (selectedLabels.length === 0) {
+      await answerCallbackQuery(query.id, 'No options selected');
+      return;
+    }
+
+    // Inject keystrokes: iterate each option from top, Space if selected, Down to next
+    // Claude Code multi-select UI starts with cursor on first option
+    try {
+      for (let i = 0; i < pending.options.length; i++) {
+        if (selected[i]) {
+          await tmuxExec(`tmux send-keys -t ${pending.tmuxSession} Space`);
+          await sleep(100);
+        }
+        await tmuxExec(`tmux send-keys -t ${pending.tmuxSession} Down`);
+        await sleep(100);
+      }
+      // After iterating all options, cursor is on Submit — press Enter
+      await tmuxExec(`tmux send-keys -t ${pending.tmuxSession} Enter`);
+
+      // For multi-question flows: extra Enter to confirm
+      if (pending.isLast) {
+        await sleep(500);
+        await tmuxExec(`tmux send-keys -t ${pending.tmuxSession} Enter`);
+      }
+
+      await answerCallbackQuery(query.id, `Submitted ${selectedLabels.length} options`);
+    } catch (err) {
+      logger.error(`Failed to inject tmux keystrokes: ${err.message}`);
+      await answerCallbackQuery(query.id, 'Failed to send selections');
+      return;
+    }
+
+    // Edit message to show selections and remove buttons
+    const selectionText = selectedLabels.map(l => `• ${escapeMarkdown(l)}`).join('\n');
+    try {
+      await editMessageText(chatId, messageId, `${originalText}\n\n— Selected:\n${selectionText}`);
     } catch (err) {
       logger.error(`Failed to edit message: ${err.message}`);
     }
@@ -826,7 +900,7 @@ async function processCallbackQuery(query) {
 // ── Message router ──────────────────────────────────────────────
 
 async function processMessage(msg) {
-  stopAllTypingIndicators();
+  stopTypingIndicator();
   // Only accept messages from the configured chat
   const chatId = String(msg.chat.id);
   if (chatId !== String(CHAT_ID)) {

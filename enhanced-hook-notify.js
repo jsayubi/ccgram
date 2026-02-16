@@ -59,6 +59,7 @@ async function main() {
     // Dedup: if a richer prompt (permission/question) is already pending for this
     // workspace, skip the basic "Waiting for input" notification
     if (STATUS_ARG === 'waiting' && hasPendingForWorkspace(workspace)) {
+      try { fs.unlinkSync(path.join(__dirname, 'src/data', 'typing-active')); } catch {}
       return;
     }
 
@@ -81,6 +82,12 @@ async function main() {
       } catch {}
     }
 
+    // Remove typing signal file BEFORE sending, so the bot's interval tick
+    // doesn't re-assert typing during the async Telegram send
+    try {
+      fs.unlinkSync(path.join(__dirname, 'src/data', 'typing-active'));
+    } catch {}
+
     try {
       const result = await sendTelegram(message, 'HTML');
       if (result && result.message_id) {
@@ -98,11 +105,6 @@ async function main() {
         console.error(`[hook-notify] Telegram send failed: ${err2.message}`);
       }
     }
-
-    // Remove typing signal file so the bot stops its typing indicator
-    try {
-      fs.unlinkSync(path.join(__dirname, 'src/data', `typing-${workspace}`));
-    } catch {}
   }
 }
 

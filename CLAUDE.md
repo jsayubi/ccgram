@@ -78,9 +78,10 @@ If `permissionDecision: "allow"` is returned, Claude Code bypasses the question 
 
 1. `permission-hook.js` exits silently for AskUserQuestion (no stdout), so Claude Code shows the combined question/permission UI in the terminal
 2. `question-notify.js` sends Telegram message(s) with option buttons (no stdout output, 2s delay so permission UI renders first)
-3. User taps an option in Telegram → bot injects arrow Down keys + Enter via tmux (selects answer AND grants permission in one action)
-4. For multi-question flows: last question's callback sends an extra Enter to submit the preview/confirmation step
-5. Pending files include `isLast` flag to track the final question in a batch
+3. **Single-select**: User taps an option → bot injects Down keys + Enter via tmux (selects answer AND grants permission in one action)
+4. **Multi-select**: Buttons show ☐/☑ checkboxes. Tapping toggles state (stored in pending file). User taps ✅ Submit → bot iterates options with Space (for selected) + Down, then Enter
+5. For multi-question flows: last question's callback sends an extra Enter to submit the preview/confirmation step
+6. Pending files include `isLast` and `multiSelect` flags
 
 ## Telegram Bot Commands
 
@@ -114,13 +115,14 @@ If `permissionDecision: "allow"` is returned, Claude Code bypasses the question 
 7. Plain text with default workspace set — route there
 8. Plain text fallback — show help hint
 
-**Typing indicator**: After injecting a command, the bot sends a repeating `sendChatAction: typing` every 4.5s. It stops when: the hook removes the signal file (`src/data/typing-<workspace>`), the user sends a new message, or the 5-minute safety timeout expires.
+**Typing indicator**: After injecting a command, the bot sends a repeating `sendChatAction: typing` every 4.5s. It stops when: the hook removes the signal file (`src/data/typing-active`), the user sends a new message, or the 5-minute safety timeout expires.
 
 ## Callback Data Format
 
 Telegram inline keyboard callbacks use: `type:promptId:action`
 - `perm:<id>:allow|deny|always` - Permission responses (writes response file)
-- `opt:<id>:N` - Question option N (injects arrow Down keys + Enter via tmux)
+- `opt:<id>:N` - Single-select: injects arrow Down keys + Enter via tmux. Multi-select: toggles checkbox state in pending file, updates button labels (☐/☑)
+- `opt-submit:<id>` - Multi-select submit: iterates options with Space (for selected) + Down, then Enter on Submit
 - `qperm:<id>:N` - Combined permission+question (writes permission response + delayed keystroke injection)
 - `new:<projectName>` - Start Claude session in a project directory
 

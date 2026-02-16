@@ -73,8 +73,9 @@ async function main() {
 
     if (options.length > 0) {
       // Build inline keyboard with numbered options
+      const prefix = q.multiSelect ? '☐ ' : '';
       const buttons = options.map((opt, idx) => ({
-        text: `${idx + 1}. ${opt.label}`,
+        text: `${prefix}${idx + 1}. ${opt.label}`,
         callback_data: `opt:${promptId}:${idx + 1}`,
       }));
 
@@ -82,6 +83,10 @@ async function main() {
       const keyboard = [];
       for (let i = 0; i < buttons.length; i += 2) {
         keyboard.push(buttons.slice(i, i + 2));
+      }
+      // Add Submit button for multi-select questions
+      if (q.multiSelect) {
+        keyboard.push([{ text: '✅ Submit', callback_data: `opt-submit:${promptId}` }]);
       }
 
       // Add option descriptions to the message
@@ -97,6 +102,8 @@ async function main() {
         tmuxSession,
         questionText,
         options: options.map(o => o.label),
+        multiSelect: q.multiSelect || false,
+        selectedOptions: q.multiSelect ? options.map(() => false) : undefined,
         isLast,
       });
 

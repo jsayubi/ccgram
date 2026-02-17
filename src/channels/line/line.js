@@ -4,8 +4,8 @@
  */
 
 const NotificationChannel = require('../base/channel');
-const { optionalRequire, getUUID } = require('../../utils/optional-require');
-const axios = optionalRequire('axios', 'LINE API requests');
+const { getUUID } = require('../../utils/optional-require');
+const httpJSON = require('../../utils/http-request');
 const uuidv4 = getUUID();
 const path = require('path');
 const fs = require('fs');
@@ -67,9 +67,6 @@ class LINEChannel extends NotificationChannel {
     }
 
     async _sendImpl(notification) {
-        if (!axios) {
-            throw new Error('axios is required for LINE notifications. Install with: npm install axios');
-        }
         if (!this._validateConfig()) {
             throw new Error('LINE channel not properly configured');
         }
@@ -104,12 +101,11 @@ class LINEChannel extends NotificationChannel {
         };
 
         try {
-            const response = await axios.post(
+            await httpJSON.post(
                 `${this.lineApiUrl}/push`,
                 requestData,
                 {
                     headers: {
-                        'Content-Type': 'application/json',
                         'Authorization': `Bearer ${this.config.channelAccessToken}`
                     }
                 }
@@ -118,7 +114,7 @@ class LINEChannel extends NotificationChannel {
             this.logger.info(`LINE message sent successfully, Session: ${sessionId}`);
             return true;
         } catch (error) {
-            this.logger.error('Failed to send LINE message:', error.response?.data || error.message);
+            this.logger.error('Failed to send LINE message:', error.message);
             // Clean up failed session
             await this._removeSession(sessionId);
             return false;

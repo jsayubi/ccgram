@@ -6,7 +6,7 @@
 const { optionalRequire } = require('../../utils/optional-require');
 const express = optionalRequire('express', 'LINE webhook server');
 const crypto = require('crypto');
-const axios = optionalRequire('axios', 'LINE API requests');
+const httpJSON = require('../../utils/http-request');
 const path = require('path');
 const fs = require('fs');
 const Logger = require('../../core/logger');
@@ -16,9 +16,6 @@ class LINEWebhookHandler {
     constructor(config = {}) {
         if (!express) {
             throw new Error('express is required for the LINE webhook server. Install with: npm install express');
-        }
-        if (!axios) {
-            throw new Error('axios is required for the LINE webhook server. Install with: npm install axios');
         }
         this.config = config;
         this.logger = new Logger('LINEWebhook');
@@ -201,24 +198,17 @@ class LINEWebhookHandler {
 
     async _replyMessage(replyToken, text) {
         try {
-            await axios.post(
+            await httpJSON.post(
                 'https://api.line.me/v2/bot/message/reply',
-                {
-                    replyToken: replyToken,
-                    messages: [{
-                        type: 'text',
-                        text: text
-                    }]
-                },
+                { replyToken, messages: [{ type: 'text', text }] },
                 {
                     headers: {
-                        'Content-Type': 'application/json',
                         'Authorization': `Bearer ${this.config.channelAccessToken}`
                     }
                 }
             );
         } catch (error) {
-            this.logger.error('Failed to reply message:', error.response?.data || error.message);
+            this.logger.error('Failed to reply message:', error.message);
         }
     }
 

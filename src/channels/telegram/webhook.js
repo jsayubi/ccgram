@@ -6,7 +6,7 @@
 const { optionalRequire } = require('../../utils/optional-require');
 const express = optionalRequire('express', 'Telegram webhook server');
 const crypto = require('crypto');
-const axios = optionalRequire('axios', 'Telegram API requests');
+const httpJSON = require('../../utils/http-request');
 const path = require('path');
 const fs = require('fs');
 const Logger = require('../../core/logger');
@@ -16,9 +16,6 @@ class TelegramWebhookHandler {
     constructor(config = {}) {
         if (!express) {
             throw new Error('express is required for the Telegram webhook server. Install with: npm install express');
-        }
-        if (!axios) {
-            throw new Error('axios is required for the Telegram webhook server. Install with: npm install axios');
         }
         this.config = config;
         this.logger = new Logger('TelegramWebhook');
@@ -48,7 +45,7 @@ class TelegramWebhookHandler {
     }
 
     /**
-     * Generate network options for axios requests
+     * Generate network options for HTTP requests
      * @returns {Object} Network options object
      */
     _getNetworkOptions() {
@@ -244,11 +241,11 @@ class TelegramWebhookHandler {
         }
 
         try {
-            const response = await axios.get(
+            const response = await httpJSON.get(
                 `${this.apiBaseUrl}/bot${this.config.botToken}/getMe`,
                 this._getNetworkOptions()
             );
-            
+
             if (response.data.ok && response.data.result.username) {
                 this.botUsername = response.data.result.username;
                 return this.botUsername;
@@ -256,7 +253,7 @@ class TelegramWebhookHandler {
         } catch (error) {
             this.logger.error('Failed to get bot username:', error.message);
         }
-        
+
         // Fallback to configured username or default
         return this.config.botUsername || 'claude_remote_bot';
     }
@@ -291,50 +288,40 @@ class TelegramWebhookHandler {
 
     async _sendMessage(chatId, text, options = {}) {
         try {
-            await axios.post(
+            await httpJSON.post(
                 `${this.apiBaseUrl}/bot${this.config.botToken}/sendMessage`,
-                {
-                    chat_id: chatId,
-                    text: text,
-                    ...options
-                },
+                { chat_id: chatId, text, ...options },
                 this._getNetworkOptions()
             );
         } catch (error) {
-            this.logger.error('Failed to send message:', error.response?.data || error.message);
+            this.logger.error('Failed to send message:', error.message);
         }
     }
 
     async _answerCallbackQuery(callbackQueryId, text = '') {
         try {
-            await axios.post(
+            await httpJSON.post(
                 `${this.apiBaseUrl}/bot${this.config.botToken}/answerCallbackQuery`,
-                {
-                    callback_query_id: callbackQueryId,
-                    text: text
-                },
+                { callback_query_id: callbackQueryId, text },
                 this._getNetworkOptions()
             );
         } catch (error) {
-            this.logger.error('Failed to answer callback query:', error.response?.data || error.message);
+            this.logger.error('Failed to answer callback query:', error.message);
         }
     }
 
     async setWebhook(webhookUrl) {
         try {
-            const response = await axios.post(
+            const response = await httpJSON.post(
                 `${this.apiBaseUrl}/bot${this.config.botToken}/setWebhook`,
-                {
-                    url: webhookUrl,
-                    allowed_updates: ['message', 'callback_query']
-                },
+                { url: webhookUrl, allowed_updates: ['message', 'callback_query'] },
                 this._getNetworkOptions()
             );
 
             this.logger.info('Webhook set successfully:', response.data);
             return response.data;
         } catch (error) {
-            this.logger.error('Failed to set webhook:', error.response?.data || error.message);
+            this.logger.error('Failed to set webhook:', error.message);
             throw error;
         }
     }

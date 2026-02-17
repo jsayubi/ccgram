@@ -4,8 +4,8 @@
  */
 
 const NotificationChannel = require('../base/channel');
-const { optionalRequire, getUUID } = require('../../utils/optional-require');
-const axios = optionalRequire('axios', 'Telegram API requests');
+const { getUUID } = require('../../utils/optional-require');
+const httpJSON = require('../../utils/http-request');
 const uuidv4 = getUUID();
 const path = require('path');
 const fs = require('fs');
@@ -43,7 +43,7 @@ class TelegramChannel extends NotificationChannel {
     }
 
     /**
-     * Generate network options for axios requests
+     * Generate network options for HTTP requests
      * @returns {Object} Network options object
      */
     _getNetworkOptions() {
@@ -85,11 +85,11 @@ class TelegramChannel extends NotificationChannel {
         }
 
         try {
-            const response = await axios.get(
+            const response = await httpJSON.get(
                 `${this.apiBaseUrl}/bot${this.config.botToken}/getMe`,
                 this._getNetworkOptions()
             );
-            
+
             if (response.data.ok && response.data.result.username) {
                 this.botUsername = response.data.result.username;
                 return this.botUsername;
@@ -97,15 +97,12 @@ class TelegramChannel extends NotificationChannel {
         } catch (error) {
             this.logger.error('Failed to get bot username:', error.message);
         }
-        
+
         // Fallback to configured username or default
         return this.config.botUsername || 'claude_remote_bot';
     }
 
     async _sendImpl(notification) {
-        if (!axios) {
-            throw new Error('axios is required for Telegram notifications. Install with: npm install axios');
-        }
         if (!this._validateConfig()) {
             throw new Error('Telegram channel not properly configured');
         }
@@ -160,7 +157,7 @@ class TelegramChannel extends NotificationChannel {
         };
 
         try {
-            const response = await axios.post(
+            await httpJSON.post(
                 `${this.apiBaseUrl}/bot${this.config.botToken}/sendMessage`,
                 requestData,
                 this._getNetworkOptions()
@@ -169,7 +166,7 @@ class TelegramChannel extends NotificationChannel {
             this.logger.info(`Telegram message sent successfully, Session: ${sessionId}`);
             return true;
         } catch (error) {
-            this.logger.error('Failed to send Telegram message:', error.response?.data || error.message);
+            this.logger.error('Failed to send Telegram message:', error.message);
             // Clean up failed session
             await this._removeSession(sessionId);
             return false;

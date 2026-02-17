@@ -55,3 +55,4 @@ src/data/
 # Claude Code local state
 .claude/
 CLAUDE.md
+LAUNCH-PLAN.md

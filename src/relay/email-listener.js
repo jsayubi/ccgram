@@ -3,8 +3,10 @@
  * Monitors IMAP inbox for replies and extracts commands
  */
 
-const Imap = require('node-imap');
-const { simpleParser } = require('mailparser');
+const optionalRequire = require('../utils/optional-require');
+const Imap = optionalRequire('node-imap', 'IMAP email listening');
+const mailparserModule = optionalRequire('mailparser', 'email parsing');
+const simpleParser = mailparserModule ? mailparserModule.simpleParser : null;
 const EventEmitter = require('events');
 const Logger = require('../core/logger');
 const fs = require('fs');
@@ -33,6 +35,13 @@ class EmailListener extends EventEmitter {
     }
 
     async start() {
+        if (!Imap) {
+            throw new Error('node-imap is required for email listening. Install with: npm install node-imap');
+        }
+        if (!simpleParser) {
+            throw new Error('mailparser is required for email listening. Install with: npm install mailparser');
+        }
+
         if (this.isListening) {
             this.logger.warn('Email listener already running');
             return;

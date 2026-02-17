@@ -4,8 +4,9 @@
  */
 
 const NotificationChannel = require('../base/channel');
-const axios = require('axios');
-const { v4: uuidv4 } = require('uuid');
+const { optionalRequire, getUUID } = require('../../utils/optional-require');
+const axios = optionalRequire('axios', 'Telegram API requests');
+const uuidv4 = getUUID();
 const path = require('path');
 const fs = require('fs');
 const TmuxMonitor = require('../../utils/tmux-monitor');
@@ -102,6 +103,9 @@ class TelegramChannel extends NotificationChannel {
     }
 
     async _sendImpl(notification) {
+        if (!axios) {
+            throw new Error('axios is required for Telegram notifications. Install with: npm install axios');
+        }
         if (!this._validateConfig()) {
             throw new Error('Telegram channel not properly configured');
         }

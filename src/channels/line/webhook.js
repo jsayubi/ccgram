@@ -3,9 +3,10 @@
  * Handles incoming LINE messages and commands
  */
 
-const express = require('express');
+const { optionalRequire } = require('../../utils/optional-require');
+const express = optionalRequire('express', 'LINE webhook server');
 const crypto = require('crypto');
-const axios = require('axios');
+const axios = optionalRequire('axios', 'LINE API requests');
 const path = require('path');
 const fs = require('fs');
 const Logger = require('../../core/logger');
@@ -13,6 +14,12 @@ const ControllerInjector = require('../../utils/controller-injector');
 
 class LINEWebhookHandler {
     constructor(config = {}) {
+        if (!express) {
+            throw new Error('express is required for the LINE webhook server. Install with: npm install express');
+        }
+        if (!axios) {
+            throw new Error('axios is required for the LINE webhook server. Install with: npm install axios');
+        }
         this.config = config;
         this.logger = new Logger('LINEWebhook');
         this.sessionsDir = path.join(__dirname, '../../data/sessions');

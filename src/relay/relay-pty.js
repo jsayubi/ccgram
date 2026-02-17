@@ -8,23 +8,41 @@
 const path = require('path');
 const envPath = path.join(__dirname, '../../.env');
 require('dotenv').config({ path: envPath });
-const Imap = require('node-imap');
-const { simpleParser } = require('mailparser');
-const { spawn } = require('node-pty');
+const optionalRequire = require('../utils/optional-require');
+const Imap = optionalRequire('node-imap', 'IMAP email relay');
+const mailparserModule = optionalRequire('mailparser', 'email parsing');
+const simpleParser = mailparserModule ? mailparserModule.simpleParser : null;
+const nodePty = optionalRequire('node-pty', 'PTY terminal emulation');
+const spawn = nodePty ? nodePty.spawn : null;
 const { existsSync, readFileSync, writeFileSync } = require('fs');
-const pino = require('pino');
+const pinoModule = optionalRequire('pino', 'structured logging');
 
-// Configure logging
-const log = pino({
-    level: process.env.LOG_LEVEL || 'info',
-    transport: {
-        target: 'pino-pretty',
-        options: {
-            colorize: true,
-            translateTime: 'HH:MM:ss'
-        }
+// Configure logging with fallback to console
+let log;
+if (pinoModule) {
+    const pinoPretty = optionalRequire('pino-pretty', 'log formatting');
+    if (pinoPretty) {
+        log = pinoModule({
+            level: process.env.LOG_LEVEL || 'info',
+            transport: {
+                target: 'pino-pretty',
+                options: { colorize: true, translateTime: 'HH:MM:ss' }
+            }
+        });
+    } else {
+        log = pinoModule({ level: process.env.LOG_LEVEL || 'info' });
     }
-});
+} else {
+    const logLevel = process.env.LOG_LEVEL || 'info';
+    const levels = { debug: 0, info: 1, warn: 2, error: 3 };
+    const minLevel = levels[logLevel] ?? 1;
+    log = {
+        debug: (...args) => { if (minLevel <= 0) console.log('[DEBUG]', ...args); },
+        info: (...args) => { if (minLevel <= 1) console.log('[INFO]', ...args); },
+        warn: (...args) => { if (minLevel <= 2) console.warn('[WARN]', ...args); },
+        error: (...args) => { if (minLevel <= 3) console.error('[ERROR]', ...args); },
+    };
+}
 
 // Global configuration
 const SESS_PATH = process.env.SESSION_MAP_PATH || path.join(__dirname, '../data/session-map.json');
@@ -501,6 +519,15 @@ async function handleMailMessage(parsed) {
 
 // Start IMAP listening
 function startImap() {
+    if (!Imap) {
+        console.error('Error: node-imap is required for the email relay. Install with: npm install node-imap');
+        process.exit(1);
+    }
+    if (!simpleParser) {
+        console.error('Error: mailparser is required for the email relay. Install with: npm install mailparser');
+        process.exit(1);
+    }
+
     // First load processed messages
     loadProcessedMessages();
     

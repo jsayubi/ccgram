@@ -4,8 +4,9 @@
  */
 
 const NotificationChannel = require('../base/channel');
-const nodemailer = require('nodemailer');
-const { v4: uuidv4 } = require('uuid');
+const { optionalRequire, getUUID } = require('../../utils/optional-require');
+const nodemailer = optionalRequire('nodemailer', 'email notifications');
+const uuidv4 = getUUID();
 const path = require('path');
 const fs = require('fs');
 const TmuxMonitor = require('../../utils/tmux-monitor');
@@ -56,6 +57,11 @@ class EmailChannel extends NotificationChannel {
     }
 
     _initializeTransporter() {
+        if (!nodemailer) {
+            this.logger.warn('nodemailer not installed. Email notifications unavailable. Install with: npm install nodemailer');
+            return;
+        }
+
         if (!this.config.smtp) {
             this.logger.warn('SMTP configuration not found');
             return;

@@ -20,26 +20,17 @@ function optionalRequire(moduleName, featureName) {
 }
 
 /**
- * Get a uuid.v4-compatible function, falling back to crypto-based implementation.
- * Caches the result to avoid repeated warnings.
+ * Get a uuid.v4-compatible function using Node's built-in crypto module.
+ * Returns a RFC 4122 v4 UUID generator (no external dependency needed).
  */
-let _uuidv4;
 function getUUID() {
-    if (_uuidv4) return _uuidv4;
-
-    const uuidModule = optionalRequire('uuid', 'UUID generation');
-    if (uuidModule) {
-        _uuidv4 = uuidModule.v4;
-    } else {
-        _uuidv4 = function uuidv4() {
-            const bytes = require('crypto').randomBytes(16);
-            bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
-            bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 1
-            const hex = bytes.toString('hex');
-            return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join('-');
-        };
-    }
-    return _uuidv4;
+    return function uuidv4() {
+        const bytes = require('crypto').randomBytes(16);
+        bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+        bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 1
+        const hex = bytes.toString('hex');
+        return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join('-');
+    };
 }
 
 module.exports = optionalRequire;

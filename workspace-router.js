@@ -18,7 +18,7 @@ const SESSION_TIMEOUT_HOURS = parseInt(process.env.SESSION_TIMEOUT, 10) || 24;
 
 /**
  * Extract a short project name from a cwd path.
- * "/Users/aliayubi/projects/wp-super-ai" -> "wp-super-ai"
+ * "/home/user/projects/my-project" -> "my-project"
  */
 function extractWorkspaceName(cwd) {
   if (!cwd) return null;
@@ -343,7 +343,7 @@ function recordProjectUsage(name, projectPath) {
 const PINNED_PROJECTS = ['assistant', 'ccgram'];
 
 function getRecentProjects(limit = 10) {
-  const home = process.env.HOME || '/Users/aliayubi';
+  const home = process.env.HOME || require('os').homedir();
   const history = readProjectHistory();
 
   // 1. Scan project directories and get modification times

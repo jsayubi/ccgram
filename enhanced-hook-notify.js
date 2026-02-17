@@ -7,8 +7,8 @@
  * updates the session map, and sends a Telegram notification.
  *
  * Usage (in ~/.claude/settings.json hooks):
- *   node /Users/aliayubi/tools/ccgram/enhanced-hook-notify.js completed
- *   node /Users/aliayubi/tools/ccgram/enhanced-hook-notify.js waiting
+ *   node /path/to/ccgram/enhanced-hook-notify.js completed
+ *   node /path/to/ccgram/enhanced-hook-notify.js waiting
  */
 
 const fs = require('fs');

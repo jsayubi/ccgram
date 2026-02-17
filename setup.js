@@ -10,11 +10,19 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const readline = require('readline');
+const https = require('https');
+const { execSync } = require('child_process');
 const dotenv = require('dotenv');
 
 const projectRoot = __dirname;
 const envPath = path.join(projectRoot, '.env');
-const hookScriptPath = path.join(projectRoot, 'claude-hook-notify.js');
+// Hook definitions for Claude Code integration
+const HOOK_DEFINITIONS = [
+    { event: 'PermissionRequest', script: 'permission-hook.js', timeout: 120 },
+    { event: 'PreToolUse', script: 'question-notify.js', timeout: 5, matcher: 'AskUserQuestion' },
+    { event: 'Stop', script: 'enhanced-hook-notify.js', args: 'completed', timeout: 5 },
+    { event: 'Notification', script: 'enhanced-hook-notify.js', args: 'waiting', timeout: 5, matcher: 'permission_prompt' },
+];
 const defaultSessionMap = path.join(projectRoot, 'src', 'data', 'session-map.json');
 const i18nPath = path.join(projectRoot, 'setup-i18n.json');
 
@@ -151,6 +159,53 @@ function loadExistingEnv() {
     }
 }
 
+function checkTmux() {
+    try {
+        const version = execSync('tmux -V', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+        console.log(success(`tmux found: ${version}`));
+        return true;
+    } catch {
+        const isMac = process.platform === 'darwin';
+        console.log(warning('tmux is not installed — required for keystroke injection'));
+        console.log(dim(`   Install: ${isMac ? 'brew install tmux' : 'sudo apt install tmux'}`));
+        return false;
+    }
+}
+
+function validateBotToken(token) {
+    return new Promise(resolve => {
+        const url = `https://api.telegram.org/bot${token}/getMe`;
+        const req = https.get(url, { timeout: 10000 }, res => {
+            let data = '';
+            res.on('data', chunk => { data += chunk; });
+            res.on('end', () => {
+                try {
+                    const json = JSON.parse(data);
+                    if (json.ok && json.result) {
+                        console.log(success(`Bot verified: @${json.result.username}`));
+                        resolve(true);
+                    } else {
+                        console.log(warning(`Bot token validation failed: ${json.description || 'unknown error'}`));
+                        resolve(false);
+                    }
+                } catch {
+                    console.log(warning('Bot token validation failed: invalid API response'));
+                    resolve(false);
+                }
+            });
+        });
+        req.on('error', err => {
+            console.log(warning(`Bot token validation failed: ${err.message}`));
+            resolve(false);
+        });
+        req.on('timeout', () => {
+            req.destroy();
+            console.log(warning('Bot token validation timed out'));
+            resolve(false);
+        });
+    });
+}
+
 function serializeEnvValue(value) {
     if (value === undefined || value === null) return '';
     const stringValue = String(value);
@@ -200,9 +255,23 @@ function writeEnvFile(values, existingEnv) {
     return envPath;
 }
 
-function makeHookCommand(event) {
-    const script = hookScriptPath.includes(' ') ? `"${hookScriptPath}"` : hookScriptPath;
-    return `node ${script} ${event}`;
+function makeHookCommand(def) {
+    const scriptPath = path.join(projectRoot, def.script);
+    const quoted = scriptPath.includes(' ') ? `"${scriptPath}"` : scriptPath;
+    return def.args ? `node ${quoted} ${def.args}` : `node ${quoted}`;
+}
+
+function buildHooksJSON() {
+    const hooks = {};
+    for (const def of HOOK_DEFINITIONS) {
+        const entry = {};
+        if (def.matcher) entry.matcher = def.matcher;
+        entry.hooks = [{ type: 'command', command: makeHookCommand(def), timeout: def.timeout }];
+
+        if (!hooks[def.event]) hooks[def.event] = [];
+        hooks[def.event].push(entry);
+    }
+    return hooks;
 }
 
 function ensureHooksFile() {
@@ -230,27 +299,21 @@ function ensureHooksFile() {
 
     settings.hooks = settings.hooks || {};
 
-    const stopHooks = Array.isArray(settings.hooks.Stop) ? settings.hooks.Stop : [];
-    const subagentHooks = Array.isArray(settings.hooks.SubagentStop) ? settings.hooks.SubagentStop : [];
+    for (const def of HOOK_DEFINITIONS) {
+        const command = makeHookCommand(def);
+        const eventHooks = Array.isArray(settings.hooks[def.event]) ? settings.hooks[def.event] : [];
 
-    const completedCommand = makeHookCommand('completed');
-    const waitingCommand = makeHookCommand('waiting');
-
-    function upsertHook(list, command) {
-        const exists = list.some(entry =>
+        const exists = eventHooks.some(entry =>
             Array.isArray(entry.hooks) && entry.hooks.some(h => h.command === command)
         );
         if (!exists) {
-            list.push({
-                matcher: '*',
-                hooks: [{ type: 'command', command, timeout: 5 }]
-            });
+            const entry = {};
+            if (def.matcher) entry.matcher = def.matcher;
+            entry.hooks = [{ type: 'command', command, timeout: def.timeout }];
+            eventHooks.push(entry);
         }
-        return list;
+        settings.hooks[def.event] = eventHooks;
     }
-
-    settings.hooks.Stop = upsertHook(stopHooks, completedCommand);
-    settings.hooks.SubagentStop = upsertHook(subagentHooks, waitingCommand);
 
     fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
 
@@ -271,6 +334,9 @@ async function main() {
     printHeader();
     console.log(dim(`${i18n.projectRoot}: ${projectRoot}`));
     console.log(dim(`${i18n.targetEnv}: ${envPath}`));
+
+    // Check tmux availability
+    checkTmux();
 
     const existingEnv = loadExistingEnv();
 
@@ -463,6 +529,11 @@ async function main() {
     const savedEnvPath = writeEnvFile(envValues, existingEnv);
     console.log('\n' + success(`${i18n.envSaved} ${savedEnvPath}`));
 
+    // Validate bot token if Telegram was configured
+    if (telegramEnabled && telegram.botToken) {
+        await validateBotToken(telegram.botToken);
+    }
+
     const updateHooks = await askYesNo(i18n.updateHooks, true);
     if (updateHooks) {
         const { settingsPath, existing, backupPath } = ensureHooksFile();
@@ -470,14 +541,25 @@ async function main() {
             console.log(warning(`${i18n.invalidSettings} ${backupPath}`));
         }
         console.log(success(`${existing ? i18n.hooksUpdated : i18n.hooksCreated} ${settingsPath}`));
-        console.log(dim(`   Stop → ${makeHookCommand('completed')}`));
-        console.log(dim(`   SubagentStop → ${makeHookCommand('waiting')}`));
+        for (const def of HOOK_DEFINITIONS) {
+            const label = def.matcher ? `${def.event} (${def.matcher})` : def.event;
+            console.log(dim(`   ${label} → ${makeHookCommand(def)}`));
+        }
     } else {
         console.log(warning(i18n.hooksSkipped));
     }
 
+    // Print copy-paste JSON block
+    const hooksJSON = buildHooksJSON();
+    console.log('\n' + bold(lang === 'en'
+        ? 'Copy-paste hooks for ~/.claude/settings.json:'
+        : '复制粘贴钩子到 ~/.claude/settings.json：'));
+    console.log(color('─'.repeat(60), 'gray'));
+    console.log(dim(JSON.stringify({ hooks: hooksJSON }, null, 2)));
+    console.log(color('─'.repeat(60), 'gray'));
+
     rl.close();
-    
+
     console.log('\n' + bold(color('─'.repeat(60), 'gray')));
     console.log(bold(color(`${icons.rocket} ${i18n.setupComplete}`, 'green')));
     console.log(color('─'.repeat(60), 'gray'));

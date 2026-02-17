@@ -105,18 +105,18 @@ Current `.env.example` is 143 lines with Chinese comments covering Email, LINE, 
 Users must manually add 3 hooks to `~/.claude/settings.json` with absolute paths to the CCGram install directory. Getting paths wrong is the #1 setup support question. The existing `setup.js` handles this but needs updating for the new hook files.
 
 ### Acceptance Criteria
-- [ ] `npm run setup` generates correct hooks JSON with the user's actual install path
-- [ ] Setup offers to merge hooks into `~/.claude/settings.json` (with backup)
-- [ ] Setup validates that tmux is installed and accessible
-- [ ] Setup verifies the Telegram bot token works (quick API call)
+- [x] `npm run setup` generates correct hooks JSON with the user's actual install path
+- [x] Setup offers to merge hooks into `~/.claude/settings.json` (with backup)
+- [x] Setup validates that tmux is installed and accessible
+- [x] Setup verifies the Telegram bot token works (quick API call)
 - [ ] README provides a manual copy-paste block as fallback
 
 ### Tasks
-- [ ] Update `setup.js` to generate hooks for `permission-hook.js`, `enhanced-hook-notify.js`, `question-notify.js`
-- [ ] Add settings.json merge logic with backup (`settings.json.bak`)
-- [ ] Add tmux check: `which tmux` or `tmux -V`
-- [ ] Add bot token validation: call `getMe` API and print bot username
-- [ ] Generate copy-paste hooks JSON block in README Quick Start section
+- [x] Update `setup.js` to generate hooks for `permission-hook.js`, `enhanced-hook-notify.js`, `question-notify.js`
+- [x] Add settings.json merge logic with backup (`settings.json.bak`)
+- [x] Add tmux check: `which tmux` or `tmux -V`
+- [x] Add bot token validation: call `getMe` API and print bot username
+- [x] Generate copy-paste hooks JSON block in setup output
 
 ---
 

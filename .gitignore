@@ -23,9 +23,7 @@ Thumbs.db
 # Environment variables
 .env
 .env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*.local
 
 # Logs
 logs/
@@ -48,9 +46,12 @@ build/
 # Temporary files
 tmp/
 temp/
+/tmp/claude-prompts/
+
 # Data files (session-specific, should not be committed)
 src/data/
 !src/data/.gitkeep
 
-# Claude configuration (user-specific, kept local)
-# CLAUDE.md is now tracked as project documentation
+# Claude Code local state
+.claude/
+CLAUDE.md

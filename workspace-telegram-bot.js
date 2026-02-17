@@ -44,12 +44,14 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
 if (!BOT_TOKEN || BOT_TOKEN === 'YOUR_BOT_TOKEN_HERE') {
-  console.error('[telegram-bot] TELEGRAM_BOT_TOKEN not configured in .env');
+  console.error('[ccgram] TELEGRAM_BOT_TOKEN not configured in .env');
+  console.error('  Get your token from @BotFather: https://t.me/BotFather');
   process.exit(1);
 }
 
 if (!CHAT_ID || CHAT_ID === 'YOUR_CHAT_ID_HERE') {
-  console.error('[telegram-bot] TELEGRAM_CHAT_ID not configured in .env');
+  console.error('[ccgram] TELEGRAM_CHAT_ID not configured in .env');
+  console.error('  Get your chat ID from @userinfobot: https://t.me/userinfobot');
   process.exit(1);
 }
 
@@ -1082,7 +1084,12 @@ function sleep(ms) {
 // ── Startup ─────────────────────────────────────────────────────
 
 async function start() {
-  logger.info('Starting Workspace Telegram Bot (long polling)...');
+  // Ensure data directory exists
+  const dataDir = path.join(__dirname, 'src/data');
+  fs.mkdirSync(dataDir, { recursive: true });
+
+  const { version } = require('./package.json');
+  logger.info(`CCGram v${version} — Starting Telegram bot (long polling)...`);
   logger.info(`Chat ID: ${CHAT_ID}`);
 
   // Prune expired sessions on startup

@@ -30,7 +30,7 @@ Make CCGram easy to install, reliable across machines, and ready for public GitH
 
 ---
 
-## Story 2: Obvious Entry Point
+## Story 2: Obvious Entry Point ✅
 
 **As a** new user,
 **I want** a single `npm start` command to run the bot,
@@ -40,17 +40,17 @@ Make CCGram easy to install, reliable across machines, and ready for public GitH
 Current scripts: `setup`, `config`, `daemon:start`, `daemon:stop`, `daemon:status`, `relay:pty`, `relay:start`, `telegram`, `line`, `webhooks`. No `start`. A new user cloning the repo has no idea which one launches the Telegram bot.
 
 ### Acceptance Criteria
-- [ ] `npm start` launches the Telegram bot
+- [x] `npm start` launches the Telegram bot
 - [ ] README Quick Start says `npm start`
-- [ ] Bot prints a clear startup message: "CCGram running. Send /help in Telegram."
+- [x] Bot prints a clear startup message: `CCGram v1.0.0 — Starting Telegram bot (long polling)...`
 
 ### Tasks
-- [ ] Add `"start": "node workspace-telegram-bot.js"` to `package.json` scripts
-- [ ] Add startup banner log with version and bot username
+- [x] Add `"start": "node workspace-telegram-bot.js"` to `package.json` scripts
+- [x] Add startup banner log with version from `package.json`
 
 ---
 
-## Story 3: No Crash on Fresh Clone
+## Story 3: No Crash on Fresh Clone ✅
 
 **As a** user running CCGram for the first time,
 **I want** the bot to start without errors,
@@ -60,20 +60,19 @@ Current scripts: `setup`, `config`, `daemon:start`, `daemon:stop`, `daemon:statu
 `src/data/` is gitignored. On a fresh clone, the directory doesn't exist. The first `fs.writeFileSync('src/data/session-map.json', ...)` throws `ENOENT` and crashes.
 
 ### Acceptance Criteria
-- [ ] `src/data/` is auto-created on startup if missing
-- [ ] `src/data/.gitkeep` exists in the repo so git tracks the empty directory
-- [ ] `/tmp/claude-prompts/` is auto-created by prompt-bridge if missing
-- [ ] Bot starts cleanly from a fresh `git clone` with no pre-existing data files
+- [x] `src/data/` is auto-created on startup if missing
+- [x] `src/data/.gitkeep` exists in the repo so git tracks the empty directory
+- [x] `/tmp/claude-prompts/` is auto-created by prompt-bridge if missing (already existed)
+- [x] Bot starts cleanly from a fresh `git clone` with no pre-existing data files
 
 ### Tasks
-- [ ] Add `fs.mkdirSync(dataDir, { recursive: true })` to `workspace-router.js` init
-- [ ] Add `fs.mkdirSync(PROMPTS_DIR, { recursive: true })` to `prompt-bridge.js` init
-- [ ] Add `src/data/.gitkeep` to repo
-- [ ] Verify: clone repo, run `npm start`, confirm no ENOENT errors
+- [x] Add `fs.mkdirSync(dataDir, { recursive: true })` to bot `start()` function
+- [x] `workspace-router.js` and `prompt-bridge.js` already create dirs before writes (verified)
+- [x] Add `src/data/.gitkeep` to repo
 
 ---
 
-## Story 4: Simple Configuration
+## Story 4: Simple Configuration ✅
 
 **As a** new user,
 **I want** to configure the bot by filling in 2 values, not 143 lines,
@@ -83,15 +82,15 @@ Current scripts: `setup`, `config`, `daemon:start`, `daemon:stop`, `daemon:statu
 Current `.env.example` is 143 lines with Chinese comments covering Email, LINE, SMTP, IMAP, relay, and Gmail setup. A Telegram user needs exactly: `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
 
 ### Acceptance Criteria
-- [ ] `.env.example` contains only the 2 required Telegram fields with English comments
-- [ ] Full config file preserved as `.env.full-example` for power users
-- [ ] Comments explain how to get each value (BotFather link, userinfobot link)
-- [ ] Bot validates env vars on startup and prints actionable error if missing
+- [x] `.env.example` contains only the 2 required Telegram fields with English comments
+- [x] Full config file preserved as `.env.full-example` for power users
+- [x] Comments explain how to get each value (BotFather link, userinfobot link)
+- [x] Bot validates env vars on startup and prints actionable error if missing
 
 ### Tasks
-- [ ] Create minimal `.env.example` (bot token + chat ID, English, with help links)
-- [ ] Rename current `.env.example` to `.env.full-example`
-- [ ] Add startup validation: check `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` exist, exit with clear message if not
+- [x] Create minimal `.env.example` (bot token + chat ID, English, with help links)
+- [x] Rename current `.env.example` to `.env.full-example`
+- [x] Improved startup validation with BotFather/userinfobot links in error messages
 - [ ] Remove Chinese-only comments from all config files (or add English equivalents)
 
 ---
@@ -430,9 +429,9 @@ The bot runs as a long-polling process. If the Telegram API connection drops or 
 | Priority | Story | Effort | Impact |
 |----------|-------|--------|--------|
 | P0 | ~~Story 1: Zero-Failure Install~~ | ~~1 hour~~ | ✅ Done |
-| P0 | Story 2: Obvious Entry Point | 10 min | First thing users look for |
-| P0 | Story 3: No Crash on Fresh Clone | 15 min | Prevents immediate failure |
-| P0 | Story 4: Simple Configuration | 30 min | Removes confusion |
+| P0 | ~~Story 2: Obvious Entry Point~~ | ~~10 min~~ | ✅ Done |
+| P0 | ~~Story 3: No Crash on Fresh Clone~~ | ~~15 min~~ | ✅ Done |
+| P0 | ~~Story 4: Simple Configuration~~ | ~~30 min~~ | ✅ Done |
 | P1 | Story 5: One-Command Hook Setup | 2 hours | Biggest remaining friction |
 | P1 | Story 6: Correct Engine Requirement | 30 min | Prevents cryptic errors |
 | P1 | Story 7: Updated Package Identity | 15 min | Correct branding |

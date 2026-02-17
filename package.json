@@ -39,12 +39,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/Claude-Code-Remote/Claude-Code-Remote.git"
+    "url": "https://github.com/jsayubi/ccgram.git"
   },
   "bugs": {
-    "url": "https://github.com/Claude-Code-Remote/Claude-Code-Remote/issues"
+    "url": "https://github.com/jsayubi/ccgram/issues"
   },
-  "homepage": "https://github.com/Claude-Code-Remote/Claude-Code-Remote#readme",
+  "homepage": "https://github.com/jsayubi/ccgram#readme",
   "dependencies": {
     "dotenv": "^17.2.1"
   },

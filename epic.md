@@ -154,7 +154,7 @@ Package name is still `claude-code-remote`, repo URL points to upstream, descrip
 - [ ] Package name: `ccgram`
 - [ ] Description: "Control Claude Code from Telegram"
 - [ ] Author: correct
-- [ ] Repository URL: `github.com/aliayubi/ccgram`
+- [ ] Repository URL: `github.com/jsayubi/ccgram`
 - [ ] Homepage: `https://ccgram.com`
 - [ ] Keywords updated for discoverability
 

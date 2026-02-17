@@ -340,7 +340,7 @@ function recordProjectUsage(name, projectPath) {
   fs.writeFileSync(PROJECT_HISTORY_PATH, JSON.stringify(trimmed, null, 2), 'utf8');
 }
 
-const PINNED_PROJECTS = ['assistant', 'claude-remote'];
+const PINNED_PROJECTS = ['assistant', 'ccgram'];
 
 function getRecentProjects(limit = 10) {
   const home = process.env.HOME || '/Users/aliayubi';

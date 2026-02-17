@@ -1,4 +1,4 @@
-# Claude Code Remote
+# CCGram
 
 Remote notification and control system for Claude Code via Telegram, with file-based IPC and tmux integration.
 
@@ -33,6 +33,11 @@ Claude Code Hooks  -->  Hook Scripts  -->  Telegram Bot  -->  User
 | `workspace-router.js` | Maps workspace names to tmux sessions, prefix resolution, default workspace, message tracking |
 | `claude-remote.js` | Main CLI entry point (`notify`, `test`, `status`, `config`, etc.) |
 | `smart-monitor.js` | Tmux pane monitoring for completion/waiting detection |
+
+### Utilities
+| File | Purpose |
+|------|---------|
+| `src/utils/optional-require.js` | Shared `optionalRequire(mod, feature)` helper (returns null if missing) + `getUUID()` with crypto fallback |
 
 ### Config & Data
 | Path | Purpose |
@@ -90,7 +95,7 @@ If `permissionDecision: "allow"` is returned, Claude Code bypasses the question 
 - `/use` - Show current default workspace
 - `/use clear` / `/use none` - Clear default workspace
 - `/compact [workspace]` - Compact context in workspace (injects `/compact` slash command)
-- `/new [project]` - Start Claude in a project directory (shows recent projects if no arg; scans ~/projects/ and ~/tools/ directories, merges with history, pins `assistant` and `claude-remote` at top)
+- `/new [project]` - Start Claude in a project directory (shows recent projects if no arg; scans ~/projects/ and ~/tools/ directories, merges with history, pins `assistant` and `ccgram` at top)
 - `/sessions` - List active sessions (shows default workspace)
 - `/status [workspace]` - Show tmux pane output (HTML formatted, defaults to default workspace)
 - `/stop [workspace]` - Interrupt running prompt (sends Ctrl+C to tmux)
@@ -129,11 +134,11 @@ Telegram inline keyboard callbacks use: `type:promptId:action`
 ## Development
 
 ### Service Management
-The bot runs as a launchd service (`~/Library/LaunchAgents/com.claude.remote.plist`) with `KeepAlive: true`.
+The bot runs as a launchd service (`~/Library/LaunchAgents/com.ccgram.plist`) with `KeepAlive: true`.
 
 ```bash
 # Restart bot
-launchctl kickstart -k gui/$(id -u)/com.claude.remote
+launchctl kickstart -k gui/$(id -u)/com.ccgram
 
 # View bot logs
 tail -f logs/bot-stdout.log
@@ -152,6 +157,11 @@ tail -f logs/permission-hook-debug.log
 }
 ```
 
+### Dependencies
+- **`dotenv`** is the only required dependency. All others (axios, express, nodemailer, node-imap, node-pty, mailparser, pino, pino-pretty, uuid) are in `optionalDependencies`.
+- Non-core files use `optionalRequire()` from `src/utils/optional-require.js` for graceful degradation.
+- `uuid` has a built-in `crypto.randomBytes` fallback via `getUUID()`. `pino` has a console-based fallback logger in `relay-pty.js`.
+
 ### Important Gotchas
 - Do NOT use `process.exit(0)` after writing to stdout in hooks - it truncates pipe buffers. Let the process exit naturally.
 - Always destroy `process.stdin` in hooks to prevent the event loop from hanging.
@@ -165,3 +175,9 @@ tail -f logs/permission-hook-debug.log
 - `permission-hook-simple-test.js` - Immediate "allow" response, for isolating hook format issues
 - `test-telegram-notification.js` - Tests Telegram API connectivity
 - `test-real-notification.js` - Tests actual notification flow
+
+## Planning & Roadmap
+
+- **[LAUNCH-PLAN.md](LAUNCH-PLAN.md)** — Launch strategy: repo setup, README structure, visual assets, social media launch plan, timeline, and competitor positioning
+- **[epic.md](epic.md)** — Technical backlog: 16 stories covering install hardening (P0), code quality (P1), test coverage (P2), and tech stack improvements like TypeScript migration, structured logging, npm publishing (P3)
+- **Domain**: ccgram.com (purchased)

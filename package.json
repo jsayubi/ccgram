@@ -1,8 +1,8 @@
 {
-  "name": "claude-code-remote",
+  "name": "ccgram",
   "version": "1.0.0",
-  "description": "Claude Code Smart Notification System - Send desktop notifications when Claude completes tasks or needs input",
-  "main": "hook-notify.js",
+  "description": "Control Claude Code from Telegram",
+  "main": "workspace-telegram-bot.js",
   "scripts": {
     "start": "node workspace-telegram-bot.js",
     "setup": "node setup.js",
@@ -17,20 +17,19 @@
     "webhooks": "node start-all-webhooks.js"
   },
   "keywords": [
+    "ccgram",
     "claude-code",
-    "notification",
-    "desktop-notification",
-    "hooks",
-    "productivity",
-    "development-tools",
-    "task-management",
+    "telegram-bot",
+    "remote-control",
+    "ai-coding",
+    "developer-tools",
     "claude",
-    "ai-assistant"
+    "anthropic"
   ],
-  "author": "Claude-Code-Remote Team",
+  "author": "JS Ayubi",
   "license": "MIT",
   "engines": {
-    "node": ">=14.0.0"
+    "node": ">=18.0.0"
   },
   "os": [
     "darwin",
@@ -44,7 +43,7 @@
   "bugs": {
     "url": "https://github.com/jsayubi/ccgram/issues"
   },
-  "homepage": "https://github.com/jsayubi/ccgram#readme",
+  "homepage": "https://ccgram.com",
   "dependencies": {
     "dotenv": "^17.2.1"
   },

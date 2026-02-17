@@ -120,7 +120,7 @@ Users must manually add 3 hooks to `~/.claude/settings.json` with absolute paths
 
 ---
 
-## Story 6: Correct Engine Requirement
+## Story 6: Correct Engine Requirement ✅
 
 **As a** user with an older Node.js version,
 **I want** a clear error telling me to upgrade,
@@ -130,18 +130,18 @@ Users must manually add 3 hooks to `~/.claude/settings.json` with absolute paths
 `package.json` says `>=14` but `crypto.randomUUID()` (used in `prompt-bridge.js`) requires Node >=19. Node 14 and 16 are EOL. Node 18 is current LTS.
 
 ### Acceptance Criteria
-- [ ] `engines.node` set to `>=18.0.0`
-- [ ] Bot checks Node version on startup and prints clear upgrade message if too old
-- [ ] All Node.js APIs used are available in Node 18+
+- [x] `engines.node` set to `>=18.0.0`
+- [x] Bot checks Node version on startup and prints clear upgrade message if too old
+- [x] All Node.js APIs used are available in Node 18+
 
 ### Tasks
-- [ ] Update `engines.node` to `>=18.0.0` in `package.json`
-- [ ] Audit codebase for APIs requiring Node >18 (e.g., `crypto.randomUUID` is 19+, may need polyfill or replace with `uuid` module)
-- [ ] Add version check at top of `workspace-telegram-bot.js`
+- [x] Update `engines.node` to `>=18.0.0` in `package.json`
+- [x] Audit codebase for APIs requiring Node >18 (e.g., `crypto.randomUUID` is 19+, may need polyfill or replace with `uuid` module)
+- [x] Add version check at top of `workspace-telegram-bot.js`
 
 ---
 
-## Story 7: Updated Package Identity
+## Story 7: Updated Package Identity ✅
 
 **As a** user or contributor,
 **I want** `package.json` to reflect CCGram, not the upstream fork,
@@ -151,16 +151,16 @@ Users must manually add 3 hooks to `~/.claude/settings.json` with absolute paths
 Package name is still `claude-code-remote`, repo URL points to upstream, description mentions "Smart Notification System", author is "Claude-Code-Remote Team".
 
 ### Acceptance Criteria
-- [ ] Package name: `ccgram`
-- [ ] Description: "Control Claude Code from Telegram"
-- [ ] Author: correct
-- [ ] Repository URL: `github.com/jsayubi/ccgram`
-- [ ] Homepage: `https://ccgram.com`
-- [ ] Keywords updated for discoverability
+- [x] Package name: `ccgram`
+- [x] Description: "Control Claude Code from Telegram"
+- [x] Author: correct
+- [x] Repository URL: `github.com/jsayubi/ccgram`
+- [x] Homepage: `https://ccgram.com`
+- [x] Keywords updated for discoverability
 
 ### Tasks
-- [ ] Update `name`, `description`, `author`, `repository`, `bugs`, `homepage` in `package.json`
-- [ ] Update `keywords`: `ccgram`, `claude-code`, `telegram-bot`, `remote-control`, `ai-coding`, `developer-tools`, `claude`, `anthropic`
+- [x] Update `name`, `description`, `author`, `repository`, `bugs`, `homepage` in `package.json`
+- [x] Update `keywords`: `ccgram`, `claude-code`, `telegram-bot`, `remote-control`, `ai-coding`, `developer-tools`, `claude`, `anthropic`
 - [ ] Commit `package-lock.json` for reproducible installs
 
 ---
@@ -433,8 +433,8 @@ The bot runs as a long-polling process. If the Telegram API connection drops or 
 | P0 | ~~Story 3: No Crash on Fresh Clone~~ | ~~15 min~~ | ✅ Done |
 | P0 | ~~Story 4: Simple Configuration~~ | ~~30 min~~ | ✅ Done |
 | P1 | Story 5: One-Command Hook Setup | 2 hours | Biggest remaining friction |
-| P1 | Story 6: Correct Engine Requirement | 30 min | Prevents cryptic errors |
-| P1 | Story 7: Updated Package Identity | 15 min | Correct branding |
+| P1 | ~~Story 6: Correct Engine Requirement~~ | ~~30 min~~ | ✅ Done |
+| P1 | ~~Story 7: Updated Package Identity~~ | ~~15 min~~ | ✅ Done |
 | P1 | Story 14: Consolidate Duplicate Deps | 1 hour | Clean dep tree |
 | P2 | Story 8: Basic Test Coverage | 3 hours | Contributor confidence |
 | P2 | Story 9: Cross-Platform Compatibility | 2 hours | Expands audience |

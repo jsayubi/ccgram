@@ -1,5 +1,13 @@
 #!/usr/bin/env node
 
+// Node.js version check — must run before anything else
+const [major] = process.versions.node.split('.').map(Number);
+if (major < 18) {
+    console.error(`CCGram requires Node.js >= 18.0.0 (you have ${process.version}).`);
+    console.error('Upgrade: https://nodejs.org/ or use nvm: nvm install 18');
+    process.exit(1);
+}
+
 /**
  * Workspace Telegram Bot — long-polling bot for remote Claude Code control.
  *

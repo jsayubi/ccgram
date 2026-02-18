@@ -95,7 +95,7 @@ Current `.env.example` is 143 lines with Chinese comments covering Email, LINE, 
 
 ---
 
-## Story 5: One-Command Hook Setup
+## Story 5: One-Command Hook Setup ✅
 
 **As a** new user,
 **I want** to set up Claude Code hooks without manually editing JSON files,
@@ -438,13 +438,13 @@ The bot runs as a long-polling process. If the Telegram API connection drops or 
 | P0 | ~~Story 2: Obvious Entry Point~~ | ~~10 min~~ | ✅ Done |
 | P0 | ~~Story 3: No Crash on Fresh Clone~~ | ~~15 min~~ | ✅ Done |
 | P0 | ~~Story 4: Simple Configuration~~ | ~~30 min~~ | ✅ Done |
-| P1 | Story 5: One-Command Hook Setup | 2 hours | Biggest remaining friction |
+| P1 | ~~Story 5: One-Command Hook Setup~~ | ~~2 hours~~ | ✅ Done |
 | P1 | ~~Story 6: Correct Engine Requirement~~ | ~~30 min~~ | ✅ Done |
 | P1 | ~~Story 7: Updated Package Identity~~ | ~~15 min~~ | ✅ Done |
 | P1 | ~~Story 14: Consolidate Duplicate Deps~~ | ~~1 hour~~ | ✅ Done |
 | P2 | ~~Story 8: Basic Test Coverage~~ | ~~3 hours~~ | ✅ Done |
 | P2 | ~~Story 9: Cross-Platform Compatibility~~ | ~~2 hours~~ | ✅ Done |
-| P2 | Story 10: Clean Codebase | 2 hours | Professional impression |
+| P2 | ~~Story 10: Clean Codebase~~ | ~~2 hours~~ | ✅ Done |
 | P2 | Story 12: Structured Logging | 2 hours | Debuggability |
 | P2 | ~~Story 13: Replace Axios with HTTPS~~ | ~~1 hour~~ | ✅ Done |
 | P3 | Story 11: TypeScript Migration | 2-3 days | Long-term maintainability |

@@ -49,34 +49,26 @@ const {
   cleanPrompt,
 } = require('./prompt-bridge');
 const { parseCallbackData } = require('./src/utils/callback-parser');
+const Logger = require('./src/core/logger');
+const logger = new Logger('bot');
+
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
 if (!BOT_TOKEN || BOT_TOKEN === 'YOUR_BOT_TOKEN_HERE') {
-  console.error('[ccgram] TELEGRAM_BOT_TOKEN not configured in .env');
-  console.error('  Get your token from @BotFather: https://t.me/BotFather');
+  logger.error('TELEGRAM_BOT_TOKEN not configured in .env');
+  logger.error('  Get your token from @BotFather: https://t.me/BotFather');
   process.exit(1);
 }
 
 if (!CHAT_ID || CHAT_ID === 'YOUR_CHAT_ID_HERE') {
-  console.error('[ccgram] TELEGRAM_CHAT_ID not configured in .env');
-  console.error('  Get your chat ID from @userinfobot: https://t.me/userinfobot');
+  logger.error('TELEGRAM_CHAT_ID not configured in .env');
+  logger.error('  Get your chat ID from @userinfobot: https://t.me/userinfobot');
   process.exit(1);
 }
 
 let lastUpdateId = 0;
 const activeTypingIntervals = new Map(); // workspace → intervalId
-
-const logger = {
-  info: (...args) => console.log(new Date().toISOString(), '[INFO]', ...args),
-  warn: (...args) => console.warn(new Date().toISOString(), '[WARN]', ...args),
-  error: (...args) => console.error(new Date().toISOString(), '[ERROR]', ...args),
-  debug: (...args) => {
-    if (process.env.LOG_LEVEL === 'debug') {
-      console.log(new Date().toISOString(), '[DEBUG]', ...args);
-    }
-  },
-};
 
 // ── Telegram API helpers ────────────────────────────────────────
 

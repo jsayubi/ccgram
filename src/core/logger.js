@@ -6,16 +6,19 @@
 class Logger {
     constructor(namespace = 'CCGram') {
         this.namespace = namespace;
-        this.logLevel = process.env.CLAUDE_CODE_REMOTE_LOG_LEVEL || 'info';
+    }
+
+    get logLevel() {
+        return process.env.LOG_LEVEL || 'info';
     }
 
     _log(level, message, ...args) {
+        if (!this._shouldLog(level)) return;
         const timestamp = new Date().toISOString();
         const prefix = `[${timestamp}] [${this.namespace}] [${level.toUpperCase()}]`;
-        
-        if (this._shouldLog(level)) {
-            console.log(prefix, message, ...args);
-        }
+        if (level === 'error') console.error(prefix, message, ...args);
+        else if (level === 'warn') console.warn(prefix, message, ...args);
+        else console.log(prefix, message, ...args);
     }
 
     _shouldLog(level) {

@@ -11,6 +11,8 @@
 const fs = require('fs');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env'), quiet: true });
+const Logger = require('./src/core/logger');
+const logger = new Logger('router');
 
 const DATA_DIR = process.env.CCGRAM_DATA_DIR || path.join(__dirname, 'src/data');
 const SESSION_MAP_PATH = process.env.SESSION_MAP_PATH
@@ -35,7 +37,7 @@ function readSessionMap() {
     if (err.code === 'ENOENT') {
       return {};
     }
-    console.error(`[workspace-router] Failed to read session map: ${err.message}`);
+    logger.error(`Failed to read session map: ${err.message}`);
     return {};
   }
 }

@@ -16,6 +16,8 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env'), quiet: true });
 
 const https = require('https');
+const Logger = require('./src/core/logger');
+const logger = new Logger('hook:enhanced');
 const { upsertSession, extractWorkspaceName, trackNotificationMessage } = require('./workspace-router');
 const { hasPendingForWorkspace } = require('./prompt-bridge');
 
@@ -51,7 +53,7 @@ async function main() {
       sessionId,
     });
   } catch (err) {
-    console.error(`[hook-notify] Failed to update session map: ${err.message}`);
+    logger.error(`Failed to update session map: ${err.message}`);
   }
 
   // Send Telegram notification
@@ -102,7 +104,7 @@ async function main() {
           trackNotificationMessage(result.message_id, workspace, `hook-${STATUS_ARG}`);
         }
       } catch (err2) {
-        console.error(`[hook-notify] Telegram send failed: ${err2.message}`);
+        logger.error(`Telegram send failed: ${err2.message}`);
       }
     }
   }
@@ -237,6 +239,6 @@ function escapeMarkdown(text) {
 // ── Run ─────────────────────────────────────────────────────────
 
 main().catch((err) => {
-  console.error(`[hook-notify] Fatal: ${err.message}`);
+  logger.error(`Fatal: ${err.message}`);
   process.exit(1);
 });

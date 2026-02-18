@@ -8,26 +8,28 @@
 const path = require('path');
 const fs = require('fs');
 const dotenv = require('dotenv');
+const Logger = require('./src/core/logger');
+const logger = new Logger('hook:notify');
 
 // Load environment variables from the project directory
 const projectDir = path.dirname(__filename);
 const envPath = path.join(projectDir, '.env');
 
-console.log('🔍 Hook script started from:', process.cwd());
-console.log('📁 Script location:', __filename);
-console.log('🔧 Looking for .env at:', envPath);
+logger.debug('Hook script started from:', process.cwd());
+logger.debug('Script location:', __filename);
+logger.debug('Looking for .env at:', envPath);
 
 if (fs.existsSync(envPath)) {
-    console.log('✅ .env file found, loading...');
+    logger.debug('.env file found, loading...');
     dotenv.config({ path: envPath });
 } else {
-    console.error('❌ .env file not found at:', envPath);
-    console.log('📂 Available files in script directory:');
+    logger.error('.env file not found at:', envPath);
+    logger.error('Available files in script directory:');
     try {
         const files = fs.readdirSync(projectDir);
-        console.log(files.join(', '));
+        logger.error(files.join(', '));
     } catch (error) {
-        console.error('Cannot read directory:', error.message);
+        logger.error('Cannot read directory:', error.message);
     }
     process.exit(1);
 }
@@ -38,7 +40,7 @@ const EmailChannel = require('./src/channels/email/smtp');
 
 async function sendHookNotification() {
     try {
-        console.log('🔔 Claude Hook: Sending notifications...');
+        logger.info('Sending notifications...');
         
         // Get notification type from command line argument
         const notificationType = process.argv[2] || 'completed';
@@ -118,23 +120,23 @@ async function sendHookNotification() {
             // Don't set metadata here - let TelegramChannel extract real conversation content
         };
         
-        console.log(`📱 Sending ${notificationType} notification for project: ${projectName}`);
-        console.log(`🖥️ Tmux session: ${tmuxSession}`);
+        logger.info(`Sending ${notificationType} notification for project: ${projectName}`);
+        logger.debug(`Tmux session: ${tmuxSession}`);
         
         // Send notifications to all configured channels
         for (const { name, channel } of channels) {
             try {
-                console.log(`📤 Sending to ${name}...`);
+                logger.debug(`Sending to ${name}...`);
                 const result = await channel.send(notification);
                 results.push({ name, success: result });
-                
+
                 if (result) {
-                    console.log(`✅ ${name} notification sent successfully!`);
+                    logger.info(`${name} notification sent successfully`);
                 } else {
-                    console.log(`❌ Failed to send ${name} notification`);
+                    logger.warn(`Failed to send ${name} notification`);
                 }
             } catch (error) {
-                console.error(`❌ ${name} notification error:`, error.message);
+                logger.error(`${name} notification error:`, error.message);
                 results.push({ name, success: false, error: error.message });
             }
         }
@@ -144,24 +146,21 @@ async function sendHookNotification() {
         const total = results.length;
         
         if (successful > 0) {
-            console.log(`\n✅ Successfully sent notifications via ${successful}/${total} channels`);
-            if (results.some(r => r.name === 'Telegram' && r.success)) {
-                console.log('📋 You can now send new commands via Telegram');
-            }
+            logger.info(`Successfully sent notifications via ${successful}/${total} channels`);
         } else {
-            console.log('\n❌ All notification channels failed');
+            logger.error('All notification channels failed');
             process.exit(1);
         }
         
     } catch (error) {
-        console.error('❌ Hook notification error:', error.message);
+        logger.error('Hook notification error:', error.message);
         process.exit(1);
     }
 }
 
 // Show usage if no arguments
 if (process.argv.length < 2) {
-    console.log('Usage: node claude-hook-notify.js [completed|waiting]');
+    logger.error('Usage: node claude-hook-notify.js [completed|waiting]');
     process.exit(1);
 }
 

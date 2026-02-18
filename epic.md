@@ -304,7 +304,7 @@ type CallbackAction =
 
 ---
 
-## Story 12: Structured Logging
+## Story 12: Structured Logging ✅
 
 **As a** user debugging an issue,
 **I want** consistent, filterable log output,
@@ -314,19 +314,21 @@ type CallbackAction =
 The core bot uses `console.log` and `console.error` with ad-hoc formatting. Hook scripts write to stderr. `pino` is in `package.json` but only used by upstream relay code, not by the core Telegram bot or hooks.
 
 ### Acceptance Criteria
-- [ ] All log output goes through a single logger module
-- [ ] Log levels: `debug`, `info`, `warn`, `error`
-- [ ] `LOG_LEVEL` env var controls verbosity (default: `info`)
-- [ ] Logs include timestamp, level, and component name (e.g., `[bot]`, `[hook:permission]`)
-- [ ] Debug mode shows tmux commands, API calls, file IPC details
-- [ ] Production mode is clean and quiet (only errors and important events)
+- [x] All log output goes through a single logger module
+- [x] Log levels: `debug`, `info`, `warn`, `error`
+- [x] `LOG_LEVEL` env var controls verbosity (default: `info`)
+- [x] Logs include timestamp, level, and component name (e.g., `[bot]`, `[hook:enhanced]`)
+- [x] Debug mode shows tmux commands, API calls, file IPC details
+- [x] Production mode is clean and quiet (only errors and important events)
 
 ### Tasks
-- [ ] Create `src/logger.js` — lightweight wrapper (no external deps needed, use `console` with formatting)
-- [ ] Replace all `console.log`/`console.error` in `workspace-telegram-bot.js` with logger
-- [ ] Replace all `console.error` in hook files with logger
-- [ ] Add component tags: `bot`, `hook:perm`, `hook:notify`, `hook:question`, `router`, `bridge`
-- [ ] Add `LOG_LEVEL` to `.env.example` with comment
+- [x] Enhanced `src/core/logger.js` — fixed env var (`LOG_LEVEL`), errors route to `console.error`, dynamic log level
+- [x] Replace all `console.log`/`console.error` in `workspace-telegram-bot.js` with Logger(`bot`)
+- [x] Replace all `console.log`/`console.error` in `smart-monitor.js` with Logger(`monitor`)
+- [x] Replace all `console.log`/`console.error` in `claude-hook-notify.js` with Logger(`hook:notify`)
+- [x] Replace all `console.error` in `enhanced-hook-notify.js` with Logger(`hook:enhanced`)
+- [x] Replace `console.error` in `workspace-router.js` with Logger(`router`)
+- [x] `LOG_LEVEL` already documented in `.env.example` and `.env.full-example`
 
 ---
 
@@ -445,7 +447,7 @@ The bot runs as a long-polling process. If the Telegram API connection drops or 
 | P2 | ~~Story 8: Basic Test Coverage~~ | ~~3 hours~~ | ✅ Done |
 | P2 | ~~Story 9: Cross-Platform Compatibility~~ | ~~2 hours~~ | ✅ Done |
 | P2 | ~~Story 10: Clean Codebase~~ | ~~2 hours~~ | ✅ Done |
-| P2 | Story 12: Structured Logging | 2 hours | Debuggability |
+| P2 | ~~Story 12: Structured Logging~~ | ~~2 hours~~ | ✅ Done |
 | P2 | ~~Story 13: Replace Axios with HTTPS~~ | ~~1 hour~~ | ✅ Done |
 | P3 | Story 11: TypeScript Migration | 2-3 days | Long-term maintainability |
 | P3 | Story 15: NPM Publishing / npx | 3 hours | Zero-clone install |

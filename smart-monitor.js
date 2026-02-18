@@ -9,6 +9,8 @@ const path = require('path');
 const fs = require('fs');
 const dotenv = require('dotenv');
 const { execSync } = require('child_process');
+const Logger = require('./src/core/logger');
+const logger = new Logger('monitor');
 
 // Load environment variables
 const envPath = path.join(__dirname, '.env');
@@ -34,16 +36,16 @@ class SmartMonitor {
                 chatId: process.env.TELEGRAM_CHAT_ID
             };
             this.telegram = new TelegramChannel(telegramConfig);
-            console.log('📱 Smart Monitor configured successfully');
+            logger.info('Smart Monitor configured successfully');
         } else {
-            console.log('❌ Telegram not configured');
+            logger.error('Telegram not configured');
             process.exit(1);
         }
     }
 
     start() {
         this.isRunning = true;
-        console.log(`🧠 Starting smart monitor for session: ${this.sessionName}`);
+        logger.info(`Starting smart monitor for session: ${this.sessionName}`);
         
         // Check for any unprocessed responses on startup
         this.checkForUnprocessedResponses();
@@ -56,7 +58,7 @@ class SmartMonitor {
     }
 
     async checkForUnprocessedResponses() {
-        console.log('🔍 Checking for unprocessed responses...');
+        logger.debug('Checking for unprocessed responses...');
         
         const currentOutput = this.captureOutput();
         const responses = this.extractAllResponses(currentOutput);
@@ -68,13 +70,13 @@ class SmartMonitor {
         });
         
         if (recentResponses.length > 0) {
-            console.log(`🎯 Found ${recentResponses.length} potentially unprocessed responses`);
+            logger.info(`Found ${recentResponses.length} potentially unprocessed responses`);
             
             // Send notification for the most recent response
             const latestResponse = recentResponses[recentResponses.length - 1];
             await this.sendNotificationForResponse(latestResponse);
         } else {
-            console.log('✅ No unprocessed responses found');
+            logger.debug('No unprocessed responses found');
         }
     }
 
@@ -85,14 +87,14 @@ class SmartMonitor {
                 stdio: ['ignore', 'pipe', 'ignore']
             });
         } catch (error) {
-            console.error('Error capturing tmux:', error.message);
+            logger.error('Error capturing tmux:', error.message);
             return '';
         }
     }
 
     autoApproveDialog() {
         try {
-            console.log('🤖 Auto-approving Claude tool usage dialog...');
+            logger.debug('Auto-approving Claude tool usage dialog...');
             
             // Send "1" to select the first option (usually "Yes")
             execSync(`tmux send-keys -t ${this.sessionName} '1'`, { encoding: 'utf8' });
@@ -100,9 +102,9 @@ class SmartMonitor {
                 execSync(`tmux send-keys -t ${this.sessionName} Enter`, { encoding: 'utf8' });
             }, 100);
             
-            console.log('✅ Auto-approval sent successfully');
+            logger.debug('Auto-approval sent successfully');
         } catch (error) {
-            console.error('❌ Failed to auto-approve dialog:', error.message);
+            logger.error('Failed to auto-approve dialog:', error.message);
         }
     }
 
@@ -193,7 +195,7 @@ class SmartMonitor {
             const currentOutput = this.captureOutput();
             
             if (currentOutput !== this.lastOutput) {
-                console.log('📝 Output changed, checking for new responses...');
+                logger.debug('Output changed, checking for new responses...');
                 
                 const oldResponses = this.extractAllResponses(this.lastOutput);
                 const newResponses = this.extractAllResponses(currentOutput);
@@ -208,14 +210,14 @@ class SmartMonitor {
                 );
                 
                 if (actuallyNewResponses.length > 0) {
-                    console.log(`🎯 Found ${actuallyNewResponses.length} new responses`);
+                    logger.info(`Found ${actuallyNewResponses.length} new responses`);
                     
                     for (const response of actuallyNewResponses) {
                         await this.sendNotificationForResponse(response);
                         this.processedResponses.add(response.responseId);
                     }
                 } else {
-                    console.log('ℹ️ No new responses detected');
+                    logger.debug('No new responses detected');
                 }
                 
                 this.lastOutput = currentOutput;
@@ -225,7 +227,7 @@ class SmartMonitor {
 
     async sendNotificationForResponse(response) {
         try {
-            console.log('📤 Sending notification for response:', response.claudeResponse.substring(0, 50) + '...');
+            logger.info('Sending notification for response:', response.claudeResponse.substring(0, 50) + '...');
             
             const notification = {
                 type: 'completed',
@@ -245,13 +247,13 @@ class SmartMonitor {
             const result = await this.telegram.send(notification);
             
             if (result) {
-                console.log('✅ Notification sent successfully');
+                logger.info('Notification sent successfully');
             } else {
-                console.log('❌ Failed to send notification');
+                logger.warn('Failed to send notification');
             }
             
         } catch (error) {
-            console.error('❌ Notification error:', error.message);
+            logger.error('Notification error:', error.message);
         }
     }
 
@@ -261,7 +263,7 @@ class SmartMonitor {
 
     stop() {
         this.isRunning = false;
-        console.log('⏹️ Smart Monitor stopped');
+        logger.info('Smart Monitor stopped');
     }
 
     getStatus() {
@@ -278,13 +280,13 @@ class SmartMonitor {
 const monitor = new SmartMonitor();
 
 process.on('SIGINT', () => {
-    console.log('\n🛑 Shutting down...');
+    logger.info('Shutting down...');
     monitor.stop();
     process.exit(0);
 });
 
 process.on('SIGTERM', () => {
-    console.log('\n🛑 Shutting down...');
+    logger.info('Shutting down...');
     monitor.stop();
     process.exit(0);
 });

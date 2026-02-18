@@ -486,12 +486,68 @@ function printServiceInstructions(): void {
         console.log(dim('    sudo systemctl restart ccgram'));
         console.log(dim('    journalctl -u ccgram -f'));
     } else if (isMac) {
-        console.log(dim('  The bot can run as a launchd service:'));
-        console.log(dim(`    See CLAUDE.md for launchd plist setup`));
+        // Generate a filled-in launchd plist
+        const nodePath: string = process.execPath;
+        const nodeDir: string = path.dirname(nodePath);
+        const logsDir: string = path.join(projectRoot, 'logs');
+        if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
+
+        const plist: string = [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+            '<plist version="1.0">',
+            '<dict>',
+            '    <key>Label</key>',
+            '    <string>com.ccgram</string>',
+            '',
+            '    <key>ProgramArguments</key>',
+            '    <array>',
+            `        <string>${nodePath}</string>`,
+            `        <string>${path.join(projectRoot, 'dist', 'workspace-telegram-bot.js')}</string>`,
+            '    </array>',
+            '',
+            '    <key>WorkingDirectory</key>',
+            `    <string>${projectRoot}</string>`,
+            '',
+            '    <key>EnvironmentVariables</key>',
+            '    <dict>',
+            '        <key>PATH</key>',
+            `        <string>${nodeDir}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>`,
+            '        <key>HOME</key>',
+            `        <string>${os.homedir()}</string>`,
+            '    </dict>',
+            '',
+            '    <key>RunAtLoad</key>',
+            '    <true/>',
+            '',
+            '    <key>KeepAlive</key>',
+            '    <true/>',
+            '',
+            '    <key>StandardOutPath</key>',
+            `    <string>${logsDir}/bot-stdout.log</string>`,
+            '',
+            '    <key>StandardErrorPath</key>',
+            `    <string>${logsDir}/bot-stderr.log</string>`,
+            '',
+            '    <key>ThrottleInterval</key>',
+            '    <integer>10</integer>',
+            '</dict>',
+            '</plist>',
+        ].join('\n');
+
+        const plistDir: string = path.join(os.homedir(), 'Library', 'LaunchAgents');
+        if (!fs.existsSync(plistDir)) fs.mkdirSync(plistDir, { recursive: true });
+        const plistPath: string = path.join(plistDir, 'com.ccgram.plist');
+        fs.writeFileSync(plistPath, plist + '\n');
+        console.log(success(`Generated ${plistPath}`));
         console.log();
-        console.log(dim('  Quick commands:'));
+        console.log(dim('  Load/restart the service:'));
+        console.log(dim('    launchctl bootout gui/$(id -u)/com.ccgram 2>/dev/null'));
+        console.log(dim(`    launchctl bootstrap gui/$(id -u) ${plistPath}`));
+        console.log();
+        console.log(dim('  Manage:'));
         console.log(dim('    launchctl kickstart -k gui/$(id -u)/com.ccgram'));
-        console.log(dim('    tail -f logs/bot-stdout.log'));
+        console.log(dim(`    tail -f ${logsDir}/bot-stdout.log`));
     } else {
         console.log(dim('  Run the bot with: npm start'));
         console.log(dim('  Or use a process manager like pm2:'));

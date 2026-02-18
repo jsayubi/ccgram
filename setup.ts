@@ -560,9 +560,14 @@ function installToHome(sourceRoot: string): string {
         }
     }
 
-    // Restore .env if it was preserved
+    // Restore existing ~/.ccgram/.env, or migrate source .env on first install
     if (preservedEnv !== null) {
         fs.writeFileSync(homeEnvPath, preservedEnv);
+    } else {
+        const sourceEnvPath = path.join(sourceRoot, '.env');
+        if (fs.existsSync(sourceEnvPath)) {
+            fs.copyFileSync(sourceEnvPath, homeEnvPath);
+        }
     }
 
     // Verify key files

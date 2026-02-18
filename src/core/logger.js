@@ -1,10 +1,10 @@
 /**
- * Claude-Code-Remote Logger
+ * CCGram Logger
  * Centralized logging utility
  */
 
 class Logger {
-    constructor(namespace = 'Claude-Code-Remote') {
+    constructor(namespace = 'CCGram') {
         this.namespace = namespace;
         this.logLevel = process.env.CLAUDE_CODE_REMOTE_LOG_LEVEL || 'info';
     }

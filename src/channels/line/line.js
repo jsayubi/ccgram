@@ -124,33 +124,33 @@ class LINEChannel extends NotificationChannel {
     _generateLINEMessage(notification, sessionId, token) {
         const type = notification.type;
         const emoji = type === 'completed' ? '✅' : '⏳';
-        const status = type === 'completed' ? '已完成' : '等待輸入';
-        
-        let messageText = `${emoji} Claude 任務 ${status}\n`;
-        messageText += `專案: ${notification.project}\n`;
-        messageText += `會話 Token: ${token}\n\n`;
-        
+        const status = type === 'completed' ? 'Completed' : 'Waiting for Input';
+
+        let messageText = `${emoji} Claude Task ${status}\n`;
+        messageText += `Project: ${notification.project}\n`;
+        messageText += `Session Token: ${token}\n\n`;
+
         if (notification.metadata) {
             if (notification.metadata.userQuestion) {
-                messageText += `📝 您的問題:\n${notification.metadata.userQuestion.substring(0, 200)}`;
+                messageText += `📝 Your question:\n${notification.metadata.userQuestion.substring(0, 200)}`;
                 if (notification.metadata.userQuestion.length > 200) {
                     messageText += '...';
                 }
                 messageText += '\n\n';
             }
-            
+
             if (notification.metadata.claudeResponse) {
-                messageText += `🤖 Claude 回應:\n${notification.metadata.claudeResponse.substring(0, 300)}`;
+                messageText += `🤖 Claude response:\n${notification.metadata.claudeResponse.substring(0, 300)}`;
                 if (notification.metadata.claudeResponse.length > 300) {
                     messageText += '...';
                 }
                 messageText += '\n\n';
             }
         }
-        
-        messageText += `💬 回覆此訊息並輸入:\n`;
-        messageText += `Token ${token} <您的指令>\n`;
-        messageText += `來發送新指令給 Claude`;
+
+        messageText += `💬 Reply to this message with:\n`;
+        messageText += `Token ${token} <your command>\n`;
+        messageText += `to send a new command to Claude`;
 
         return [{
             type: 'text',

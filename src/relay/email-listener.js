@@ -288,9 +288,9 @@ class EmailListener extends EventEmitter {
     }
 
     _isReplyEmail(email) {
-        // Check if subject contains Claude-Code-Remote identifier
+        // Check if subject contains CCGram identifier
         const subject = email.subject || '';
-        if (!subject.includes('[Claude-Code-Remote')) {
+        if (!subject.includes('[CCGram')) {
             return false;
         }
 
@@ -308,13 +308,13 @@ class EmailListener extends EventEmitter {
     _extractSessionId(email) {
         // Extract from email headers
         const headers = email.headers;
-        if (headers && headers.get('x-claude-code-remote-session-id')) {
-            return headers.get('x-claude-code-remote-session-id');
+        if (headers && headers.get('x-ccgram-session-id')) {
+            return headers.get('x-ccgram-session-id');
         }
 
         // Extract token from subject line
         const subject = email.subject || '';
-        const tokenMatch = subject.match(/\[Claude-Code-Remote #([A-Z0-9]{6,8})\]/);
+        const tokenMatch = subject.match(/\[CCGram #([A-Z0-9]{6,8})\]/);
         if (tokenMatch) {
             const token = tokenMatch[1];
             // Look up session by token

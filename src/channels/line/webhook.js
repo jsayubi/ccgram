@@ -93,7 +93,7 @@ class LINEWebhookHandler {
         // Check if user is authorized
         if (!this._isAuthorized(userId, groupId)) {
             this.logger.warn(`Unauthorized user/group: ${userId || groupId}`);
-            await this._replyMessage(replyToken, '⚠️ 您沒有權限使用此功能');
+            await this._replyMessage(replyToken, '⚠️ You are not authorized to use this feature');
             return;
         }
 
@@ -101,7 +101,7 @@ class LINEWebhookHandler {
         const commandMatch = messageText.match(/^Token\s+([A-Z0-9]{8})\s+(.+)$/i);
         if (!commandMatch) {
             await this._replyMessage(replyToken, 
-                '❌ 格式錯誤。請使用:\nToken <8位Token> <您的指令>\n\n例如:\nToken ABC12345 請幫我分析這段程式碼');
+                '❌ Invalid format. Usage:\nToken <8-char Token> <your command>\n\nExample:\nToken ABC12345 Please analyze this code');
             return;
         }
 
@@ -112,14 +112,14 @@ class LINEWebhookHandler {
         const session = await this._findSessionByToken(token);
         if (!session) {
             await this._replyMessage(replyToken, 
-                '❌ Token 無效或已過期。請等待新的任務通知。');
+                '❌ Invalid or expired token. Please wait for a new task notification.');
             return;
         }
 
         // Check if session is expired
         if (session.expiresAt < Math.floor(Date.now() / 1000)) {
             await this._replyMessage(replyToken, 
-                '❌ Token 已過期。請等待新的任務通知。');
+                '❌ Token has expired. Please wait for a new task notification.');
             await this._removeSession(session.id);
             return;
         }
@@ -131,7 +131,7 @@ class LINEWebhookHandler {
             
             // Send confirmation
             await this._replyMessage(replyToken, 
-                `✅ 指令已發送\n\n📝 指令: ${command}\n🖥️ 會話: ${tmuxSession}\n\n請稍候，Claude 正在處理您的請求...`);
+                `✅ Command sent\n\n📝 Command: ${command}\n🖥️ Session: ${tmuxSession}\n\nPlease wait, Claude is processing your request...`);
             
             // Log command execution
             this.logger.info(`Command injected - User: ${userId}, Token: ${token}, Command: ${command}`);
@@ -139,7 +139,7 @@ class LINEWebhookHandler {
         } catch (error) {
             this.logger.error('Command injection failed:', error.message);
             await this._replyMessage(replyToken, 
-                `❌ 指令執行失敗: ${error.message}`);
+                `❌ Command execution failed: ${error.message}`);
         }
     }
 

@@ -35,8 +35,8 @@ async function testNotification() {
         message: 'Test notification from Claude Code Remote',
         project: 'claude-code-line',
         metadata: {
-            userQuestion: '請幫我查詢這個代碼庫：https://github.com/JessyTsui/Claude-Code-Remote',
-            claudeResponse: '我已經查詢了這個代碼庫，這是一個 Claude Code Remote 項目，允許通過電子郵件遠程控制 Claude Code。',
+            userQuestion: 'Please look up this repository: https://github.com/ccgram/ccgram',
+            claudeResponse: 'I have looked up this repository. It is the CCGram project, which allows remote control of Claude Code via Telegram.',
             tmuxSession: 'claude-test'
         }
     };
@@ -50,7 +50,7 @@ async function testNotification() {
             console.log('📋 Now you can reply with a command in this format:');
             console.log('   /cmd TOKEN123 <your new command>');
             console.log('\n🎯 Example:');
-            console.log('   /cmd [TOKEN_FROM_MESSAGE] 請幫我分析這個專案的架構');
+            console.log('   /cmd [TOKEN_FROM_MESSAGE] Please analyze this project architecture');
         } else {
             console.log('❌ Failed to send test notification');
         }

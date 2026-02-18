@@ -136,7 +136,7 @@ class EmailChannel extends NotificationChannel {
         const emailContent = this._generateEmailContent(notification, sessionId, token);
         
         // Generate unique Message-ID
-        const messageId = `<${sessionId}-${Date.now()}@claude-code-remote>`;
+        const messageId = `<${sessionId}-${Date.now()}@ccgram>`;
         
         const mailOptions = {
             from: this.config.from || this.config.smtp.auth.user,
@@ -147,8 +147,8 @@ class EmailChannel extends NotificationChannel {
             messageId: messageId,
             // Add custom headers for reply recognition
             headers: {
-                'X-Claude-Code-Remote-Session-ID': sessionId,
-                'X-Claude-Code-Remote-Type': notification.type
+                'X-CCGram-Session-ID': sessionId,
+                'X-CCGram-Type': notification.type
             }
         };
 
@@ -203,7 +203,7 @@ class EmailChannel extends NotificationChannel {
         }
         
         // Use passed tmux session name or detect current session
-        let tmuxSession = notification.metadata?.tmuxSession || this._getCurrentTmuxSession() || 'claude-code-remote';
+        let tmuxSession = notification.metadata?.tmuxSession || this._getCurrentTmuxSession() || 'ccgram';
         
         sessionMap[token] = {
             type: 'pty',
@@ -372,7 +372,7 @@ class EmailChannel extends NotificationChannel {
         // Default templates
         const templates = {
             completed: {
-                subject: '[Claude-Code-Remote #{{token}}] Claude Code Task Completed - {{project}}',
+                subject: '[CCGram #{{token}}] Claude Code Task Completed - {{project}}',
                 html: `
                 <div style="font-family: 'Consolas', 'Monaco', 'Courier New', monospace; background-color: #f5f5f5; padding: 0; margin: 0;">
                     <div style="max-width: 900px; margin: 0 auto; background-color: #1e1e1e; border: 1px solid #333; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);">
@@ -383,7 +383,7 @@ class EmailChannel extends NotificationChannel {
                                     <td style="padding: 0;"><div style="width: 12px; height: 12px; border-radius: 50%; background-color: #ff5f56;"></div></td>
                                     <td style="padding: 0 0 0 5px;"><div style="width: 12px; height: 12px; border-radius: 50%; background-color: #ffbd2e;"></div></td>
                                     <td style="padding: 0 0 0 5px;"><div style="width: 12px; height: 12px; border-radius: 50%; background-color: #27c93f;"></div></td>
-                                    <td style="padding: 0 0 0 12px; color: #999; font-size: 14px; white-space: nowrap;">claude-code-remote@{{project}} - Task Completed</td>
+                                    <td style="padding: 0 0 0 12px; color: #999; font-size: 14px; white-space: nowrap;">ccgram@{{project}} - Task Completed</td>
                                 </tr>
                             </table>
                         </div>
@@ -440,7 +440,7 @@ class EmailChannel extends NotificationChannel {
                 </div>
                 `,
                 text: `
-[Claude-Code-Remote #{{token}}] Claude Code Task Completed - {{projectDir}} | {{shortQuestion}}
+[CCGram #{{token}}] Claude Code Task Completed - {{projectDir}} | {{shortQuestion}}
 
 Project: {{projectDir}}
 Time: {{timestamp}}
@@ -467,7 +467,7 @@ Security Note: Please do not forward this email, session will automatically expi
                 `
             },
             waiting: {
-                subject: '[Claude-Code-Remote #{{token}}] Claude Code Waiting for Input - {{project}}',
+                subject: '[CCGram #{{token}}] Claude Code Waiting for Input - {{project}}',
                 html: `
                 <div style="font-family: 'Consolas', 'Monaco', 'Courier New', monospace; background-color: #f5f5f5; padding: 0; margin: 0;">
                     <div style="max-width: 900px; margin: 0 auto; background-color: #1e1e1e; border: 1px solid #333; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);">
@@ -478,7 +478,7 @@ Security Note: Please do not forward this email, session will automatically expi
                                     <td style="padding: 0;"><div style="width: 12px; height: 12px; border-radius: 50%; background-color: #ff5f56;"></div></td>
                                     <td style="padding: 0 0 0 5px;"><div style="width: 12px; height: 12px; border-radius: 50%; background-color: #ffbd2e;"></div></td>
                                     <td style="padding: 0 0 0 5px;"><div style="width: 12px; height: 12px; border-radius: 50%; background-color: #27c93f;"></div></td>
-                                    <td style="padding: 0 0 0 12px; color: #999; font-size: 14px; white-space: nowrap;">claude-code-remote@{{project}} - Waiting for Input</td>
+                                    <td style="padding: 0 0 0 12px; color: #999; font-size: 14px; white-space: nowrap;">ccgram@{{project}} - Waiting for Input</td>
                                 </tr>
                             </table>
                         </div>
@@ -526,7 +526,7 @@ Security Note: Please do not forward this email, session will automatically expi
                                     SESSION_ID={{sessionId}}<br>
                                     EXPIRES_IN=24h<br>
                                     SECURITY=Do not forward this email<br>
-                                    POWERED_BY=Claude-Code-Remote
+                                    POWERED_BY=CCGram
                                 </div>
                             </div>
                         </div>
@@ -534,7 +534,7 @@ Security Note: Please do not forward this email, session will automatically expi
                 </div>
                 `,
                 text: `
-[Claude-Code-Remote #{{token}}] Claude Code Waiting for Input - {{projectDir}}
+[CCGram #{{token}}] Claude Code Waiting for Input - {{projectDir}}
 
 Project: {{projectDir}}
 Time: {{timestamp}}
@@ -585,9 +585,9 @@ Security Note: Please do not forward this email, session will automatically expi
             // Send test email
             const testNotification = {
                 type: 'completed',
-                title: 'Claude-Code-Remote Test',
+                title: 'CCGram Test',
                 message: 'This is a test email to verify that the email notification function is working properly.',
-                project: 'Claude-Code-Remote-Test',
+                project: 'CCGram-Test',
                 metadata: {
                     test: true,
                     timestamp: new Date().toISOString(),

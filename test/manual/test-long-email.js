@@ -91,7 +91,7 @@ function applyTransform(transformType, data) {
         type: 'completed',
         title: 'Test Long Content',
         message: 'Testing terminal-style email with long Claude response',
-        project: 'Claude-Code-Remote-Test',
+        project: 'CCGram-Test',
         metadata: {
             userQuestion: 'Please help me implement a data processing function with error handling, validation, and transformation features',
             claudeResponse: `I'll help you implement a comprehensive data processing function. Here's a complete implementation with all the features you requested:

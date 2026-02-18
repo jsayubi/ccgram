@@ -324,7 +324,7 @@ function printServiceInstructions() {
     const isMac = process.platform === 'darwin';
     const isLinux = process.platform === 'linux';
 
-    printSection(lang === 'en' ? 'Background Service' : '后台服务', icons.gear);
+    printSection('Background Service', icons.gear);
 
     if (isLinux) {
         // Generate a filled-in systemd unit file
@@ -388,7 +388,7 @@ async function main() {
     // Language selection first
     const langChoice = await askSelect(bold(`${icons.globe} ${i18nData.en.selectLanguage}`), [
         { label: 'English', value: 'en' },
-        { label: '中文', value: 'zh' }
+        { label: 'Chinese', value: 'zh' }
     ], 0);
     lang = langChoice.value;
     i18n = i18nData[lang];
@@ -403,7 +403,7 @@ async function main() {
     const existingEnv = loadExistingEnv();
 
     // Basic Configuration
-    printSection(lang === 'en' ? 'Basic Configuration' : '基本配置', icons.gear);
+    printSection('Basic Configuration', icons.gear);
     
     const sessionMapPath = await ask(i18n.sessionMapPath, existingEnv.SESSION_MAP_PATH || defaultSessionMap);
     let injectionMode = (await ask(i18n.injectionMode, existingEnv.INJECTION_MODE || 'pty')).toLowerCase();
@@ -587,7 +587,7 @@ async function main() {
         LOG_LEVEL: logLevel
     };
 
-    printSection(lang === 'en' ? 'Saving Configuration' : '保存配置', icons.star);
+    printSection('Saving Configuration', icons.star);
     const savedEnvPath = writeEnvFile(envValues, existingEnv);
     console.log('\n' + success(`${i18n.envSaved} ${savedEnvPath}`));
 
@@ -618,7 +618,7 @@ async function main() {
     const hooksJSON = buildHooksJSON();
     console.log('\n' + bold(lang === 'en'
         ? 'Copy-paste hooks for ~/.claude/settings.json:'
-        : '复制粘贴钩子到 ~/.claude/settings.json：'));
+        : 'Copy-paste hooks for ~/.claude/settings.json:'));
     console.log(color('─'.repeat(60), 'gray'));
     console.log(dim(JSON.stringify({ hooks: hooksJSON }, null, 2)));
     console.log(color('─'.repeat(60), 'gray'));

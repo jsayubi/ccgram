@@ -1,5 +1,5 @@
 /**
- * Claude-Code-Remote Installer
+ * CCGram Installer
  * Handles installation and configuration of Claude Code hooks
  */
 
@@ -50,7 +50,7 @@ class Installer {
     }
 
     async run(args = []) {
-        console.log('=== Claude-Code-Remote Claude Code Installer ===\n');
+        console.log('=== CCGram Claude Code Installer ===\n');
 
         // Check dependencies
         if (!this.checkDependencies()) {

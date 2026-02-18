@@ -1,5 +1,5 @@
 /**
- * Claude-Code-Remote Configuration Manager
+ * CCGram Configuration Manager
  * Interactive configuration tool for managing settings
  */
 
@@ -57,7 +57,7 @@ class ConfigurationManager {
 
     async showMainMenu() {
         while (true) {
-            console.log('\n=== Claude-Code-Remote Configuration Manager ===');
+            console.log('\n=== CCGram Configuration Manager ===');
             this.displayCurrentConfig();
             console.log('Options:');
             console.log('1. Basic Settings');
@@ -416,7 +416,7 @@ class ConfigurationManager {
         // Sender configuration
         const currentFrom = emailConfig.from || '';
         console.log(`Current sender: ${currentFrom || 'Not configured'}`);
-        const fromEmail = await this.question(`Sender display name (default: Claude-Code-Remote <${smtpUser}>): `);
+        const fromEmail = await this.question(`Sender display name (default: CCGram <${smtpUser}>): `);
         
         // Build email configuration
         const newEmailConfig = {
@@ -440,7 +440,7 @@ class ConfigurationManager {
                         pass: smtpPass || emailConfig.imap?.auth?.pass || ''
                     }
                 },
-                from: fromEmail || `Claude-Code-Remote <${smtpUser || currentUser}>`,
+                from: fromEmail || `CCGram <${smtpUser || currentUser}>`,
                 to: toEmail || currentTo
             }
         };
@@ -487,7 +487,7 @@ class ConfigurationManager {
 
     showHelp() {
         console.log(`
-Claude-Code-Remote Configuration Manager
+CCGram Configuration Manager
 
 Usage: claude-remote config [options]
 

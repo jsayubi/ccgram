@@ -1,21 +1,21 @@
-First of all, many thanks to everyone who wants to contribute to Claude-Code-Remote!
+First of all, many thanks to everyone who wants to contribute to CCGram!
 
-# Contributing to Claude Code Remote
+# Contributing to CCGram
 
 ## 🚀 Quick Start
 
 ```bash
 # Fork, clone, and setup
-git clone https://github.com/YOUR_USERNAME/Claude-Code-Remote.git
-cd Claude-Code-Remote
+git clone https://github.com/YOUR_USERNAME/ccgram.git
+cd ccgram
 npm install
 cp .env.example .env
 
 # Create feature branch
 git checkout -b feature/your-feature
 
-# Test your changes
-npm run webhooks
+# Run tests
+npm test
 ```
 
 ## 📝 Coding Standards (Automated Checks)
@@ -163,5 +163,4 @@ chore: update dependencies
 
 ## 📞 Get Help
 
-- Issues: [GitHub Issues](https://github.com/JessyTsui/Claude-Code-Remote/issues)
-- Twitter: [@Jiaxi_Cui](https://x.com/Jiaxi_Cui)
+- Issues: [GitHub Issues](https://github.com/jsayubi/ccgram/issues)

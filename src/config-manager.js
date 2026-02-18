@@ -77,8 +77,8 @@ class ConfigManager {
 
     // Email addresses
     console.log('\n--- Email Addresses ---');
-    const fromEmail = await this.question(`From Address [${config.email.config.from || `Claude-Code-Remote <${config.email.config.smtp.auth.user}>`}]: `);
-    config.email.config.from = fromEmail || config.email.config.from || `Claude-Code-Remote <${config.email.config.smtp.auth.user}>`;
+    const fromEmail = await this.question(`From Address [${config.email.config.from || `CCGram <${config.email.config.smtp.auth.user}>`}]: `);
+    config.email.config.from = fromEmail || config.email.config.from || `CCGram <${config.email.config.smtp.auth.user}>`;
 
     const toEmail = await this.question(`To Address [${config.email.config.to || config.email.config.smtp.auth.user}]: `);
     config.email.config.to = toEmail || config.email.config.to || config.email.config.smtp.auth.user;
@@ -129,7 +129,7 @@ class ConfigManager {
   }
 
   async interactiveMenu() {
-    console.log('\n🛠️  Claude-Code-Remote Configuration Manager\n');
+    console.log('\n🛠️  CCGram Configuration Manager\n');
     
     while (true) {
       console.log('\nChoose an option:');

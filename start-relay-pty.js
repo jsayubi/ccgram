@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Claude-Code-Remote PTY Relay Startup Script
+ * CCGram PTY Relay Startup Script
  * Start node-pty based email command relay service
  */
 
@@ -62,14 +62,14 @@ function createExampleSession() {
                 createdAt: Math.floor(Date.now() / 1000),
                 expiresAt: Math.floor((Date.now() + 24 * 60 * 60 * 1000) / 1000), // Expires after 24 hours
                 cwd: process.cwd(),
-                description: 'Test session - Include [Claude-Code-Remote #TEST123] in email subject when sending'
+                description: 'Test session - Include [CCGram #TEST123] in email subject when sending'
             }
         };
         
         fs.writeFileSync(sessionMapPath, JSON.stringify(exampleSession, null, 2));
         console.log(`📝 Created example session file: ${sessionMapPath}`);
         console.log(`🔑 Test Token: ${exampleToken}`);
-        console.log('   When sending test email, include in subject: [Claude-Code-Remote #TEST123]');
+        console.log('   When sending test email, include in subject: [CCGram #TEST123]');
         console.log('');
     }
 }
@@ -113,7 +113,7 @@ function startService() {
     // Check single instance
     checkSingleInstance();
     
-    console.log('🚀 Starting Claude-Code-Remote PTY Relay service...\n');
+    console.log('🚀 Starting CCGram PTY Relay service...\n');
     
     const relayPath = path.join(__dirname, 'src/relay/relay-pty.js');
     
@@ -174,7 +174,7 @@ function showInstructions() {
 // Main function
 function main() {
     console.log('╔══════════════════════════════════════════════════════════╗');
-    console.log('║         Claude-Code-Remote PTY Relay Service              ║');
+    console.log('║         CCGram PTY Relay Service              ║');
     console.log('║      Email Command Relay Service - node-pty based PTY mode          ║');
     console.log('╚══════════════════════════════════════════════════════════╝\n');
     

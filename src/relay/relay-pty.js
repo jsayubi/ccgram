@@ -109,11 +109,11 @@ function isAllowed(fromAddress) {
     return ALLOWED_SENDERS.some(allowed => addr.includes(allowed));
 }
 
-// Extract Claude-Code-Remote token from subject
+// Extract CCGram token from subject
 function extractTokenFromSubject(subject = '') {
     const patterns = [
-        /\[Claude-Code-Remote\s+#([A-Z0-9]+)\]/,
-        /Re:\s*\[Claude-Code-Remote\s+#([A-Z0-9]+)\]/
+        /\[CCGram\s+#([A-Z0-9]+)\]/,
+        /Re:\s*\[CCGram\s+#([A-Z0-9]+)\]/
     ];
     
     for (const pattern of patterns) {
@@ -138,7 +138,7 @@ function cleanEmailText(text = '') {
             line.includes('Session ID:') ||
             line.includes('Session ID:') ||
             line.includes(`<${process.env.SMTP_USER}>`) ||
-            line.includes('Claude-Code-Remote Notification System') ||
+            line.includes('CCGram Notification System') ||
             line.includes('on 2025') && line.includes('wrote:') ||
             line.match(/^>.*/) ||  // Quote lines start with >
             line.includes('From:') && line.includes('@') ||
@@ -179,7 +179,7 @@ function cleanEmailText(text = '') {
         }
         
         // Skip remaining email quotes
-        if (trimmedLine.includes('Claude-Code-Remote Notification System') ||
+        if (trimmedLine.includes('CCGram Notification System') ||
             trimmedLine.includes(`<${process.env.SMTP_USER}>`) ||
             trimmedLine.includes('on 2025')) {
             continue;

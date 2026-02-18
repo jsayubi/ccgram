@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Claude-Code-Remote Daemon Service
+ * CCGram Daemon Service
  * Background daemon process for monitoring emails and processing remote commands
  */
 
@@ -15,7 +15,7 @@ class ClaudeCodeRemoteDaemon {
     constructor() {
         this.logger = new Logger('Daemon');
         this.config = new ConfigManager();
-        this.pidFile = path.join(__dirname, '../data/claude-code-remote.pid');
+        this.pidFile = path.join(__dirname, '../data/ccgram-daemon.pid');
         this.logFile = path.join(__dirname, '../data/daemon.log');
         this.relayService = null;
         this.isRunning = false;
@@ -31,7 +31,7 @@ class ClaudeCodeRemoteDaemon {
         try {
             // Check if already running
             if (this.isAlreadyRunning()) {
-                console.log('❌ Claude-Code-Remote daemon is already running');
+                console.log('❌ CCGram daemon is already running');
                 console.log('💡 Use "claude-remote daemon stop" to stop existing service');
                 process.exit(1);
             }
@@ -50,7 +50,7 @@ class ClaudeCodeRemoteDaemon {
     }
 
     async startDetached() {
-        console.log('🚀 Starting Claude-Code-Remote daemon...');
+        console.log('🚀 Starting CCGram daemon...');
 
         // Create child process
         const child = spawn(process.execPath, [__filename, '--foreground'], {
@@ -69,17 +69,17 @@ class ClaudeCodeRemoteDaemon {
         // Detach child process
         child.unref();
 
-        console.log(`✅ Claude-Code-Remote daemon started (PID: ${child.pid})`);
+        console.log(`✅ CCGram daemon started (PID: ${child.pid})`);
         console.log(`📝 Log file: ${this.logFile}`);
         console.log('💡 Use "claude-remote daemon status" to view status');
         console.log('💡 Use "claude-remote daemon stop" to stop service');
     }
 
     async startForeground() {
-        console.log('🚀 Claude-Code-Remote daemon starting...');
+        console.log('🚀 CCGram daemon starting...');
         
         this.isRunning = true;
-        process.title = 'claude-code-remote-daemon';
+        process.title = 'ccgram-daemon';
 
         // Load configuration
         this.config.load();
@@ -174,13 +174,13 @@ class ClaudeCodeRemoteDaemon {
 
     async stop() {
         if (!this.isAlreadyRunning()) {
-            console.log('❌ Claude-Code-Remote daemon is not running');
+            console.log('❌ CCGram daemon is not running');
             return;
         }
 
         try {
             const pid = this.getPid();
-            console.log(`🛑 Stopping Claude-Code-Remote daemon (PID: ${pid})...`);
+            console.log(`🛑 Stopping CCGram daemon (PID: ${pid})...`);
             
             // Send SIGTERM signal
             process.kill(pid, 'SIGTERM');
@@ -188,7 +188,7 @@ class ClaudeCodeRemoteDaemon {
             // Wait for process to end
             await this.waitForStop(pid);
             
-            console.log('✅ Claude-Code-Remote daemon stopped');
+            console.log('✅ CCGram daemon stopped');
         } catch (error) {
             console.error('❌ Failed to stop daemon:', error.message);
             
@@ -201,7 +201,7 @@ class ClaudeCodeRemoteDaemon {
     }
 
     async restart() {
-        console.log('🔄 Restarting Claude-Code-Remote daemon...');
+        console.log('🔄 Restarting CCGram daemon...');
         await this.stop();
         await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
         await this.start();
@@ -223,7 +223,7 @@ class ClaudeCodeRemoteDaemon {
     showStatus() {
         const status = this.getStatus();
         
-        console.log('📊 Claude-Code-Remote daemon status\n');
+        console.log('📊 CCGram daemon status\n');
         
         if (status.running) {
             console.log('✅ Status: Running');
@@ -332,7 +332,7 @@ if (require.main === module) {
                     daemon.showStatus();
                     break;
                 default:
-                    console.log('Usage: claude-code-remote-daemon <start|stop|restart|status>');
+                    console.log('Usage: ccgram-daemon <start|stop|restart|status>');
                     process.exit(1);
             }
         } catch (error) {

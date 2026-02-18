@@ -21,7 +21,7 @@
           "pass": "your-app-password"
         }
       },
-      "from": "Claude-Code-Remote <your-email@gmail.com>",
+      "from": "CCGram <your-email@gmail.com>",
       "to": "your-email@gmail.com",
       "template": {
         "checkInterval": 30

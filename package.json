@@ -57,18 +57,6 @@
     "pino": "^9.7.0",
     "pino-pretty": "^13.0.0"
   },
-  "files": [
-    "hook-notify.js",
-    "config-tool.js",
-    "install.js",
-    "config.json",
-    "i18n.json",
-    "claude-hooks.json",
-    "sounds/",
-    "README.md",
-    "QUICKSTART.md",
-    "LICENSE"
-  ],
   "devDependencies": {
     "vitest": "^4.0.18"
   }

@@ -54,7 +54,7 @@ class NotificationChannel {
         
         const testNotification = {
             type: 'completed',
-            title: 'Claude-Code-Remote Test',
+            title: 'CCGram Test',
             message: `Test notification from ${this.name} channel`,
             project: 'test-project',
             metadata: { test: true }

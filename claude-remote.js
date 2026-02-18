@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
 /**
- * Claude-Code-Remote - Claude Code Smart Notification System
+ * CCGram - Claude Code Smart Notification System
  * Main entry point for the CLI tool
  */
 
-// Load environment variables from Claude-Code-Remote directory
+// Load environment variables from CCGram directory
 const path = require('path');
 const envPath = path.join(__dirname, '.env');
 require('dotenv').config({ path: envPath });
@@ -259,7 +259,7 @@ class ClaudeCodeRemoteCLI {
     async handleStatus(args) {
         const status = this.notifier.getStatus();
         
-        console.log('Claude-Code-Remote Status\n');
+        console.log('CCGram Status\n');
         console.log('Configuration:');
         console.log(`  Enabled: ${status.enabled ? 'Yes' : 'No'}`);
         console.log(`  Language: ${status.config.language}`);
@@ -609,7 +609,7 @@ class ClaudeCodeRemoteCLI {
         };
 
         try {
-            console.log('🚀 Claude-Code-Remote Email Quick Setup Wizard\n');
+            console.log('🚀 CCGram Email Quick Setup Wizard\n');
 
             // Select email provider
             console.log('Please select your email provider:');
@@ -700,7 +700,7 @@ class ClaudeCodeRemoteCLI {
                             pass: password
                         }
                     },
-                    from: `Claude-Code-Remote <${email}>`,
+                    from: `CCGram <${email}>`,
                     to: email,
                     template: {
                         checkInterval: 30
@@ -973,7 +973,7 @@ class ClaudeCodeRemoteCLI {
 
     showHelp() {
         console.log(`
-Claude-Code-Remote - Claude Code Smart Notification System
+CCGram - Claude Code Smart Notification System
 
 Usage: claude-remote <command> [options]
 
@@ -1028,7 +1028,7 @@ Examples:
   claude-remote commands list             # View pending email commands
   claude-remote relay start               # Run in foreground (need to keep window open)
 
-For more information, visit: https://github.com/Claude-Code-Remote/Claude-Code-Remote
+For more information, visit: https://github.com/CCGram/CCGram
         `);
     }
 }

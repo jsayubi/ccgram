@@ -218,7 +218,7 @@ Currently tested only on macOS. `launchd` is macOS-only. Some paths may be macOS
 
 ---
 
-## Story 10: Clean Codebase for Open Source
+## Story 10: Clean Codebase for Open Source ✅
 
 **As a** potential contributor browsing the repo,
 **I want** a clean, well-organized codebase,
@@ -228,18 +228,23 @@ Currently tested only on macOS. `launchd` is macOS-only. Some paths may be macOS
 Upstream fork has legacy files, Chinese-only comments in config, test scripts mixed with source code, and unused channel implementations that add complexity.
 
 ### Acceptance Criteria
-- [ ] No personal tokens, paths, or credentials in any committed file
-- [ ] All user-facing strings and comments in English (i18n files can remain multilingual)
-- [ ] Test scripts moved to `test/` directory
-- [ ] Unused or legacy files removed (`.backup` files, old scripts)
-- [ ] Clear separation: core bot files at root, channels in `src/channels/`, relay in `src/relay/`
+- [x] No personal tokens, paths, or credentials in any committed file
+- [x] All user-facing strings and comments in English (i18n files can remain multilingual)
+- [x] Test scripts moved to `test/` directory
+- [x] Unused or legacy files removed (`.backup` files, old scripts)
+- [x] Clear separation: core bot files at root, channels in `src/channels/`, relay in `src/relay/`
 
 ### Tasks
-- [ ] Security audit: scan for tokens, API keys, personal paths in all committed files
-- [ ] Move test scripts to `test/` directory
-- [ ] Remove unused legacy files (identify via git log)
-- [ ] Add English comments to all config files
-- [ ] Verify `.gitignore` covers: `.env`, `logs/`, `src/data/*.json`, `/tmp/`, `*.log`
+- [x] Security audit: scan for tokens, API keys, personal paths in all committed files (no leaks found)
+- [x] Move 7 ad-hoc test scripts to `test/manual/` (5 JS + 2 shell)
+- [x] Remove 5 unused legacy files: `smtp.js.backup`, `fix-telegram.sh`, `setup-telegram.sh`, `claude-hooks.json`, `config/defaults/claude-hooks.json`
+- [x] Translate Chinese comments/strings to English in `smart-monitor.js`, `line.js`, `webhook.js`, `.env.full-example`
+- [x] Change config defaults from `zh-CN` to `en` in 4 config files
+- [x] Remove stale `files` field from `package.json` (7 non-existent entries)
+- [x] Update `.github/CONTRIBUTING.md` branding (Claude-Code-Remote → CCGram)
+- [x] Verify `.gitignore` covers: `.env`, `logs/`, `src/data/*.json`, `/tmp/`, `*.log` (already complete)
+- [x] Full `Claude-Code-Remote` → `CCGram` branding rename across all source/config files (80+ occurrences in 20+ files)
+- [ ] README rewrite (deferred — major effort, separate task)
 
 ---
 

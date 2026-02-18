@@ -1,5 +1,5 @@
 /**
- * Claude-Code-Remote Core Notifier
+ * CCGram Core Notifier
  * Central notification orchestrator that manages multiple channels
  */
 
@@ -192,12 +192,12 @@ class Notifier {
             },
             'ja': {
                 completed: {
-                    title: 'Claude Code - タスク完了',
-                    message: '[{project}] タスクが完了しました。Claudeが次の指示を待っています'
+                    title: 'Claude Code - Task Completed',
+                    message: '[{project}] Task completed, Claude is waiting for next instruction'
                 },
                 waiting: {
-                    title: 'Claude Code - 入力待ち',
-                    message: '[{project}] Claudeにはあなたのさらなるガイダンスが必要です'
+                    title: 'Claude Code - Waiting for Input',
+                    message: '[{project}] Claude needs your further guidance'
                 }
             }
         };

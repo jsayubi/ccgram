@@ -1,0 +1,24 @@
+# CCGram systemd unit file
+# Copy to /etc/systemd/system/ccgram.service and edit paths, then:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable ccgram
+#   sudo systemctl start ccgram
+
+[Unit]
+Description=CCGram - Claude Code Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/home/YOUR_USERNAME/tools/ccgram
+ExecStart=/usr/bin/node workspace-telegram-bot.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+
+StandardOutput=append:/home/YOUR_USERNAME/tools/ccgram/logs/bot-stdout.log
+StandardError=append:/home/YOUR_USERNAME/tools/ccgram/logs/bot-stderr.log
+
+[Install]
+WantedBy=multi-user.target

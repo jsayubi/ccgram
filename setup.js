@@ -320,6 +320,68 @@ function ensureHooksFile() {
     return { settingsPath, existing, backupPath };
 }
 
+function printServiceInstructions() {
+    const isMac = process.platform === 'darwin';
+    const isLinux = process.platform === 'linux';
+
+    printSection(lang === 'en' ? 'Background Service' : '后台服务', icons.gear);
+
+    if (isLinux) {
+        // Generate a filled-in systemd unit file
+        const user = os.userInfo().username;
+        const nodePath = process.execPath;
+        const logsDir = path.join(projectRoot, 'logs');
+        if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
+
+        const unit = [
+            '[Unit]',
+            'Description=CCGram - Claude Code Telegram Bot',
+            'After=network.target',
+            '',
+            '[Service]',
+            'Type=simple',
+            `User=${user}`,
+            `WorkingDirectory=${projectRoot}`,
+            `ExecStart=${nodePath} workspace-telegram-bot.js`,
+            'Restart=always',
+            'RestartSec=5',
+            'Environment=NODE_ENV=production',
+            '',
+            `StandardOutput=append:${logsDir}/bot-stdout.log`,
+            `StandardError=append:${logsDir}/bot-stderr.log`,
+            '',
+            '[Install]',
+            'WantedBy=multi-user.target',
+        ].join('\n');
+
+        const servicePath = path.join(projectRoot, 'ccgram.service');
+        fs.writeFileSync(servicePath, unit + '\n');
+        console.log(success(`Generated ${servicePath}`));
+        console.log();
+        console.log(dim('  Install as systemd service:'));
+        console.log(dim(`    sudo cp ${servicePath} /etc/systemd/system/`));
+        console.log(dim('    sudo systemctl daemon-reload'));
+        console.log(dim('    sudo systemctl enable ccgram'));
+        console.log(dim('    sudo systemctl start ccgram'));
+        console.log();
+        console.log(dim('  Manage:'));
+        console.log(dim('    sudo systemctl status ccgram'));
+        console.log(dim('    sudo systemctl restart ccgram'));
+        console.log(dim('    journalctl -u ccgram -f'));
+    } else if (isMac) {
+        console.log(dim('  The bot can run as a launchd service:'));
+        console.log(dim(`    See CLAUDE.md for launchd plist setup`));
+        console.log();
+        console.log(dim('  Quick commands:'));
+        console.log(dim('    launchctl kickstart -k gui/$(id -u)/com.ccgram'));
+        console.log(dim('    tail -f logs/bot-stdout.log'));
+    } else {
+        console.log(dim('  Run the bot with: npm start'));
+        console.log(dim('  Or use a process manager like pm2:'));
+        console.log(dim('    npx pm2 start workspace-telegram-bot.js --name ccgram'));
+    }
+}
+
 async function main() {
     printHeader();
     
@@ -548,6 +610,9 @@ async function main() {
     } else {
         console.log(warning(i18n.hooksSkipped));
     }
+
+    // Service setup instructions
+    printServiceInstructions();
 
     // Print copy-paste JSON block
     const hooksJSON = buildHooksJSON();

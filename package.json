@@ -14,7 +14,8 @@
     "relay:start": "INJECTION_MODE=pty node src/relay/relay-pty.js",
     "telegram": "node start-telegram-webhook.js",
     "line": "node start-line-webhook.js",
-    "webhooks": "node start-all-webhooks.js"
+    "webhooks": "node start-all-webhooks.js",
+    "test": "vitest run"
   },
   "keywords": [
     "ccgram",
@@ -67,5 +68,8 @@
     "README.md",
     "QUICKSTART.md",
     "LICENSE"
-  ]
+  ],
+  "devDependencies": {
+    "vitest": "^4.0.18"
+  }
 }

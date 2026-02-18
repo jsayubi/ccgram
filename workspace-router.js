@@ -12,8 +12,9 @@ const fs = require('fs');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env'), quiet: true });
 
+const DATA_DIR = process.env.CCGRAM_DATA_DIR || path.join(__dirname, 'src/data');
 const SESSION_MAP_PATH = process.env.SESSION_MAP_PATH
-  || path.join(__dirname, 'src/data/session-map.json');
+  || path.join(DATA_DIR, 'session-map.json');
 const SESSION_TIMEOUT_HOURS = parseInt(process.env.SESSION_TIMEOUT, 10) || 24;
 
 /**
@@ -185,8 +186,8 @@ function formatAge(seconds) {
 
 // ── Prefix / Fuzzy Workspace Resolution ─────────────────────────
 
-const DEFAULT_WORKSPACE_PATH = path.join(__dirname, 'src/data/default-workspace.json');
-const MESSAGE_WORKSPACE_MAP_PATH = path.join(__dirname, 'src/data/message-workspace-map.json');
+const DEFAULT_WORKSPACE_PATH = process.env.DEFAULT_WORKSPACE_PATH || path.join(DATA_DIR, 'default-workspace.json');
+const MESSAGE_WORKSPACE_MAP_PATH = process.env.MESSAGE_WORKSPACE_MAP_PATH || path.join(DATA_DIR, 'message-workspace-map.json');
 
 /**
  * Resolve a workspace name by exact match, then prefix match.
@@ -322,7 +323,7 @@ function getWorkspaceForMessage(messageId) {
 
 // ── Project History (persists across session expiry/pruning) ─────
 
-const PROJECT_HISTORY_PATH = path.join(__dirname, 'src/data/project-history.json');
+const PROJECT_HISTORY_PATH = process.env.PROJECT_HISTORY_PATH || path.join(DATA_DIR, 'project-history.json');
 
 function readProjectHistory() {
   try {

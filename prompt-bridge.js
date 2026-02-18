@@ -16,7 +16,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const PROMPTS_DIR = '/tmp/claude-prompts';
+const PROMPTS_DIR = process.env.PROMPTS_DIR || '/tmp/claude-prompts';
 const EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
 
 /** Ensure the prompts directory exists. */

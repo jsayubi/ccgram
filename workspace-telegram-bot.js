@@ -48,6 +48,7 @@ const {
   updatePending,
   cleanPrompt,
 } = require('./prompt-bridge');
+const { parseCallbackData } = require('./src/utils/callback-parser');
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
@@ -670,12 +671,17 @@ async function processCallbackQuery(query) {
 
   logger.info(`Callback: ${data}`);
 
-  const parts = data.split(':');
-  const type = parts[0];
+  const parsed = parseCallbackData(data);
+  if (!parsed) {
+    await answerCallbackQuery(query.id, 'Invalid callback');
+    return;
+  }
+
+  const { type } = parsed;
 
   // Handle new: callback (format: new:<projectName>)
   if (type === 'new') {
-    const projectName = parts.slice(1).join(':'); // rejoin in case name had colons
+    const { projectName } = parsed;
     await answerCallbackQuery(query.id, `Starting ${projectName}...`);
     try {
       await editMessageText(chatId, messageId, `${originalText}\n\n— Starting *${escapeMarkdown(projectName)}*...`);
@@ -684,13 +690,7 @@ async function processCallbackQuery(query) {
     return;
   }
 
-  if (parts.length < 3 && type !== 'opt-submit') {
-    await answerCallbackQuery(query.id, 'Invalid callback');
-    return;
-  }
-
-  const promptId = parts[1];
-  const action = parts[2]; // undefined for opt-submit, which is fine
+  const { promptId } = parsed;
 
   if (type === 'perm') {
     // Permission response: write response file for the polling hook
@@ -701,6 +701,7 @@ async function processCallbackQuery(query) {
       return;
     }
 
+    const { action } = parsed;
     const label = action === 'allow' ? '✅ Allowed' : action === 'always' ? '🔓 Always Allowed' : '❌ Denied';
 
     // Write response file — the permission-hook.js is polling for this
@@ -723,7 +724,6 @@ async function processCallbackQuery(query) {
 
   } else if (type === 'opt') {
     // Question option: inject keystroke via tmux
-    const optionNumber = action; // "1", "2", etc.
     const pending = readPending(promptId);
 
     if (!pending || !pending.tmuxSession) {
@@ -731,10 +731,10 @@ async function processCallbackQuery(query) {
       return;
     }
 
-    const optIdx = parseInt(optionNumber, 10) - 1;
+    const optIdx = parsed.optionIndex - 1;
     const optionLabel = pending.options && pending.options[optIdx]
       ? pending.options[optIdx]
-      : `Option ${optionNumber}`;
+      : `Option ${parsed.optionIndex}`;
 
     // Multi-select: toggle selection state, update buttons, don't submit yet
     if (pending.multiSelect) {
@@ -859,7 +859,7 @@ async function processCallbackQuery(query) {
 
   } else if (type === 'qperm') {
     // Combined question+permission: allow permission AND inject answer keystroke
-    const optionNumber = action; // "1", "2", etc.
+    const optIdx = parsed.optionIndex - 1;
     const pending = readPending(promptId);
 
     if (!pending) {
@@ -867,14 +867,14 @@ async function processCallbackQuery(query) {
       return;
     }
 
-    const optionLabel = pending.options && pending.options[parseInt(optionNumber, 10) - 1]
-      ? pending.options[parseInt(optionNumber, 10) - 1]
-      : `Option ${optionNumber}`;
+    const optionLabel = pending.options && pending.options[optIdx]
+      ? pending.options[optIdx]
+      : `Option ${parsed.optionIndex}`;
 
     // 1. Write permission response (allow) — unblocks the permission hook
     try {
-      writeResponse(promptId, { action: 'allow', selectedOption: optionNumber });
-      logger.info(`Wrote qperm response for promptId=${promptId}: option=${optionNumber}`);
+      writeResponse(promptId, { action: 'allow', selectedOption: parsed.optionIndex });
+      logger.info(`Wrote qperm response for promptId=${promptId}: option=${parsed.optionIndex}`);
       await answerCallbackQuery(query.id, `Selected: ${optionLabel}`);
     } catch (err) {
       logger.error(`Failed to write qperm response: ${err.message}`);
@@ -885,7 +885,7 @@ async function processCallbackQuery(query) {
     // 2. Schedule keystroke injection after a delay (wait for question UI to appear)
     if (pending.tmuxSession) {
       const tmux = pending.tmuxSession;
-      const downPresses = parseInt(optionNumber, 10) - 1;
+      const downPresses = optIdx;
       setTimeout(async () => {
         try {
           for (let i = 0; i < downPresses; i++) {
@@ -893,7 +893,7 @@ async function processCallbackQuery(query) {
             await sleep(100);
           }
           await tmuxExec(`tmux send-keys -t ${tmux} Enter`);
-          logger.info(`Injected question answer into ${tmux}: option ${optionNumber}`);
+          logger.info(`Injected question answer into ${tmux}: option ${parsed.optionIndex}`);
         } catch (err) {
           logger.error(`Failed to inject question answer: ${err.message}`);
         }
@@ -907,8 +907,6 @@ async function processCallbackQuery(query) {
       logger.error(`Failed to edit message: ${err.message}`);
     }
 
-  } else {
-    await answerCallbackQuery(query.id, 'Unknown action');
   }
 }
 

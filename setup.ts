@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 
 /**
- * Interactive setup for Claude Code Remote
- * - Guides user through .env generation
+ * CCGram interactive setup
+ * - Guides user through Telegram bot configuration
+ * - Installs to ~/.ccgram/ for persistent hook paths
  * - Merges required hooks into ~/.claude/settings.json
+ * - Generates launchd/systemd service file
  */
 
 import fs from 'fs';
@@ -28,15 +30,6 @@ interface SelectOption {
     value: string;
 }
 
-interface EmailPreset {
-    smtpHost: string;
-    smtpPort: string;
-    smtpSecure: boolean;
-    imapHost: string;
-    imapPort: string;
-    imapSecure: boolean;
-}
-
 interface HookEntry {
     matcher?: string;
     hooks: { type: string; command: string; timeout: number }[];
@@ -48,86 +41,10 @@ interface EnsureHooksResult {
     backupPath: string | null;
 }
 
-interface I18nEmailConfig {
-    title: string;
-    quickSetup: string;
-    provider: string;
-    manual: string;
-    gmail: string;
-    outlook: string;
-    qq: string;
-    '163': string;
-    email: string;
-    appPassword: string;
-    smtpHost: string;
-    smtpPort: string;
-    smtpSecure: string;
-    smtpUser: string;
-    smtpPass: string;
-    emailFrom: string;
-    emailFromName: string;
-    emailTo: string;
-    allowedSenders: string;
-    reuseImap: string;
-    imapHost: string;
-    imapPort: string;
-    imapSecure: string;
-    imapUser: string;
-    imapPass: string;
-    checkInterval: string;
-    setupInstructions: Record<string, string>;
-}
-
-interface I18nTelegramConfig {
-    botToken: string;
-    chatId: string;
-    groupId: string;
-    whitelist: string;
-    webhookUrl: string;
-    webhookPort: string;
-    forceIPv4: string;
-}
-
-interface I18nLineConfig {
-    channelAccessToken: string;
-    channelSecret: string;
-    userId: string;
-    groupId: string;
-    whitelist: string;
-    webhookPort: string;
-}
-
-interface I18nStrings {
-    welcome: string;
-    projectRoot: string;
-    targetEnv: string;
-    selectLanguage: string;
-    sessionMapPath: string;
-    injectionMode: string;
-    injectionModeInvalid: string;
-    logLevel: string;
-    enableEmail: string;
-    enableTelegram: string;
-    enableLine: string;
-    emailConfig: I18nEmailConfig;
-    telegramConfig: I18nTelegramConfig;
-    lineConfig: I18nLineConfig;
-    envSaved: string;
-    updateHooks: string;
-    hooksUpdated: string;
-    hooksCreated: string;
-    hooksSkipped: string;
-    setupComplete: string;
-    nextStep1: string;
-    nextStep2: string;
-    setupFailed: string;
-    invalidSettings: string;
-}
-
-type I18nData = Record<string, I18nStrings>;
-
 let projectRoot: string = PROJECT_ROOT;
 let envPath: string = path.join(projectRoot, '.env');
+let defaultSessionMap: string = path.join(PROJECT_ROOT, 'src', 'data', 'session-map.json');
+
 // Hook definitions for Claude Code integration
 const HOOK_DEFINITIONS: HookDefinition[] = [
     { event: 'PermissionRequest', script: 'permission-hook.js', timeout: 120 },
@@ -135,8 +52,6 @@ const HOOK_DEFINITIONS: HookDefinition[] = [
     { event: 'Stop', script: 'enhanced-hook-notify.js', args: 'completed', timeout: 5 },
     { event: 'Notification', script: 'enhanced-hook-notify.js', args: 'waiting', timeout: 5, matcher: 'permission_prompt' },
 ];
-let defaultSessionMap: string = path.join(PROJECT_ROOT, 'src', 'data', 'session-map.json');
-const i18nPath: string = path.join(PROJECT_ROOT, 'setup-i18n.json');
 
 // ANSI color codes
 const colors = {
@@ -177,15 +92,6 @@ const icons = {
     warning: '\u26A0',
     arrow: '\u2192',
     bullet: '\u2022',
-    star: '\u2605',
-    robot: '\uD83E\uDD16',
-    email: '\uD83D\uDCE7',
-    telegram: '\uD83D\uDCAC',
-    line: '\uD83D\uDC9A',
-    globe: '\uD83C\uDF10',
-    key: '\uD83D\uDD11',
-    gear: '\u2699\uFE0F',
-    rocket: '\uD83D\uDE80'
 } as const;
 
 type ColorName = keyof typeof colors;
@@ -199,33 +105,51 @@ const error = (text: string): string => color(`${icons.cross} ${text}`, 'red');
 const warning = (text: string): string => color(`${icons.warning} ${text}`, 'yellow');
 const info = (text: string): string => color(`${icons.info} ${text}`, 'blue');
 
-// Load i18n
-const i18nData: I18nData = JSON.parse(fs.readFileSync(i18nPath, 'utf8'));
-let lang: string = 'en';
-let i18n: I18nStrings = i18nData[lang];
-
 const rl: readline.Interface = readline.createInterface({
     input: process.stdin,
     output: process.stdout
 });
 
+// ─── Box-drawing helpers ──────────────────────────────────────
+
+function centerText(text: string, visibleLen: number, width: number): string {
+    const pad = Math.max(0, Math.floor((width - visibleLen) / 2));
+    return ' '.repeat(pad) + text;
+}
+
 function printHeader(): void {
-    console.clear();
-    console.log(bold('\n' + '='.repeat(60)));
-    console.log(bold(color(`${icons.robot} Claude Code Remote - Interactive Setup ${icons.gear}`, 'cyan')));
-    console.log(bold('='.repeat(60)));
+    const W = 54; // inner width (between the vertical bars)
+    const top    = `  \u250C${ '\u2500'.repeat(W) }\u2510`;
+    const bottom = `  \u2514${ '\u2500'.repeat(W) }\u2518`;
+    const blank  = `  \u2502${ ' '.repeat(W) }\u2502`;
+
+    const title    = bold(color('CCGram Setup', 'cyan'));
+    const titleLen = 12; // "CCGram Setup"
+    const sub      = dim('Control Claude Code from Telegram');
+    const subLen   = 32; // "Control Claude Code from Telegram"
+
+    console.log();
+    console.log(top);
+    console.log(blank);
+    console.log(`  \u2502${centerText(title, titleLen, W)}`
+        + ' '.repeat(Math.max(0, W - Math.floor((W - titleLen) / 2) - titleLen)) + '\u2502');
+    console.log(`  \u2502${centerText(sub, subLen, W)}`
+        + ' '.repeat(Math.max(0, W - Math.floor((W - subLen) / 2) - subLen)) + '\u2502');
+    console.log(blank);
+    console.log(bottom);
     console.log();
 }
 
-function printSection(title: string, icon: string = icons.bullet): void {
-    console.log('\n' + bold(color(`${icon} ${title}`, 'cyan')));
-    console.log(color('\u2500'.repeat(40), 'gray'));
+function printSection(title: string): void {
+    const line = '\u2500'.repeat(42 - title.length);
+    console.log('\n  ' + bold(color(`\u2500\u2500\u2500 ${title} `, 'cyan')) + color(line, 'gray'));
+    console.log();
 }
 
 function ask(question: string, defaultValue: string = ''): Promise<string> {
     const suffix: string = defaultValue ? dim(` (${defaultValue})`) : '';
     return new Promise<string>(resolve => {
-        rl.question(`${color(icons.arrow, 'green')} ${question}${suffix}: `, (answer: string) => {
+        rl.question(`  ${color(icons.arrow, 'green')} ${question}${suffix}: `, (answer: string) => {
             resolve(answer.trim() || defaultValue);
         });
     });
@@ -254,7 +178,7 @@ function askSelect(question: string, options: SelectOption[], defaultIndex: numb
 function askYesNo(question: string, defaultValue: boolean = false): Promise<boolean> {
     const suffix: string = defaultValue ? color(' [Y/n]', 'green') : color(' [y/N]', 'red');
     return new Promise<boolean>(resolve => {
-        rl.question(`${color(icons.arrow, 'green')} ${question}${suffix} `, (answer: string) => {
+        rl.question(`  ${color(icons.arrow, 'green')} ${question}${suffix} `, (answer: string) => {
             const normalized: string = answer.trim().toLowerCase();
             if (!normalized) return resolve(defaultValue);
             resolve(normalized === 'y' || normalized === 'yes');
@@ -277,18 +201,18 @@ function loadExistingEnv(): Record<string, string> {
 function checkTmux(): boolean {
     try {
         const version: string = execSync('tmux -V', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
-        console.log(success(`tmux found: ${version}`));
+        console.log('  ' + success(`tmux found: ${version}`));
         return true;
     } catch {
         const isMac: boolean = process.platform === 'darwin';
-        console.log(warning('tmux is not installed \u2014 required for keystroke injection'));
-        console.log(dim(`   Install: ${isMac ? 'brew install tmux' : 'sudo apt install tmux'}`));
+        console.log('  ' + warning('tmux is not installed \u2014 required for keystroke injection'));
+        console.log(dim(`     Install: ${isMac ? 'brew install tmux' : 'sudo apt install tmux'}`));
         return false;
     }
 }
 
-function validateBotToken(token: string): Promise<boolean> {
-    return new Promise<boolean>(resolve => {
+function validateBotToken(token: string): Promise<{ ok: boolean; username?: string }> {
+    return new Promise<{ ok: boolean; username?: string }>(resolve => {
         const url: string = `https://api.telegram.org/bot${token}/getMe`;
         const req = https.get(url, { timeout: 10000 }, (res) => {
             let data: string = '';
@@ -298,26 +222,25 @@ function validateBotToken(token: string): Promise<boolean> {
                     const json = JSON.parse(data) as Record<string, unknown>;
                     if (json.ok && json.result) {
                         const result = json.result as Record<string, unknown>;
-                        console.log(success(`Bot verified: @${result.username}`));
-                        resolve(true);
+                        resolve({ ok: true, username: String(result.username) });
                     } else {
-                        console.log(warning(`Bot token validation failed: ${(json.description as string) || 'unknown error'}`));
-                        resolve(false);
+                        console.log('  ' + warning(`Bot token validation failed: ${(json.description as string) || 'unknown error'}`));
+                        resolve({ ok: false });
                     }
                 } catch {
-                    console.log(warning('Bot token validation failed: invalid API response'));
-                    resolve(false);
+                    console.log('  ' + warning('Bot token validation failed: invalid API response'));
+                    resolve({ ok: false });
                 }
             });
         });
         req.on('error', (err: Error) => {
-            console.log(warning(`Bot token validation failed: ${err.message}`));
-            resolve(false);
+            console.log('  ' + warning(`Bot token validation failed: ${err.message}`));
+            resolve({ ok: false });
         });
         req.on('timeout', () => {
             req.destroy();
-            console.log(warning('Bot token validation timed out'));
-            resolve(false);
+            console.log('  ' + warning('Bot token validation timed out'));
+            resolve({ ok: false });
         });
     });
 }
@@ -334,14 +257,10 @@ function serializeEnvValue(value: unknown): string {
 
 function writeEnvFile(values: Record<string, string>, existingEnv: Record<string, string>): string {
     const orderedKeys: string[] = [
-        'EMAIL_ENABLED', 'SMTP_HOST', 'SMTP_PORT', 'SMTP_SECURE', 'SMTP_USER', 'SMTP_PASS',
-        'EMAIL_FROM', 'EMAIL_FROM_NAME', 'IMAP_HOST', 'IMAP_PORT', 'IMAP_SECURE',
-        'IMAP_USER', 'IMAP_PASS', 'EMAIL_TO', 'ALLOWED_SENDERS', 'CHECK_INTERVAL',
-        'LINE_ENABLED', 'LINE_CHANNEL_ACCESS_TOKEN', 'LINE_CHANNEL_SECRET',
-        'LINE_USER_ID', 'LINE_GROUP_ID', 'LINE_WHITELIST', 'LINE_WEBHOOK_PORT',
         'TELEGRAM_ENABLED', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'TELEGRAM_GROUP_ID',
         'TELEGRAM_WHITELIST', 'TELEGRAM_WEBHOOK_URL', 'TELEGRAM_WEBHOOK_PORT',
         'TELEGRAM_FORCE_IPV4',
+        'PROJECT_DIRS',
         'SESSION_MAP_PATH', 'INJECTION_MODE', 'CLAUDE_CLI_PATH', 'LOG_LEVEL'
     ];
 
@@ -349,8 +268,8 @@ function writeEnvFile(values: Record<string, string>, existingEnv: Record<string
     const merged: Record<string, string> = { ...existingEnv, ...values };
     const lines: string[] = [];
 
-    lines.push('# Claude Code Remote configuration');
-    lines.push(`# Generated by setup.js on ${new Date().toISOString()}`);
+    lines.push('# CCGram configuration');
+    lines.push(`# Generated by ccgram init on ${new Date().toISOString()}`);
     lines.push('');
 
     orderedKeys.forEach((key: string) => {
@@ -441,7 +360,7 @@ function printServiceInstructions(): void {
     const isMac: boolean = process.platform === 'darwin';
     const isLinux: boolean = process.platform === 'linux';
 
-    printSection('Background Service', icons.gear);
+    printSection('Background Service');
 
     if (isLinux) {
         // Generate a filled-in systemd unit file
@@ -473,16 +392,22 @@ function printServiceInstructions(): void {
 
         const servicePath: string = path.join(projectRoot, 'ccgram.service');
         fs.writeFileSync(servicePath, unit + '\n');
-        console.log(success(`Generated ${servicePath}`));
-        console.log();
-        console.log(dim('  Install as systemd service:'));
-        console.log(dim(`    sudo cp ${servicePath} /etc/systemd/system/`));
-        console.log(dim('    sudo systemctl daemon-reload'));
-        console.log(dim('    sudo systemctl enable ccgram'));
-        console.log(dim('    sudo systemctl start ccgram'));
+
+        // Try to auto-install the systemd service
+        try {
+            execSync(`sudo cp ${servicePath} /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable ccgram && sudo systemctl start ccgram`, { stdio: 'pipe' });
+            console.log('  ' + success('Bot service installed and started'));
+        } catch {
+            console.log('  ' + success(`Generated ${servicePath}`));
+            console.log();
+            console.log(dim('  Install as systemd service (requires sudo):'));
+            console.log(dim(`    sudo cp ${servicePath} /etc/systemd/system/`));
+            console.log(dim('    sudo systemctl daemon-reload'));
+            console.log(dim('    sudo systemctl enable ccgram'));
+            console.log(dim('    sudo systemctl start ccgram'));
+        }
         console.log();
         console.log(dim('  Manage:'));
-        console.log(dim('    sudo systemctl status ccgram'));
         console.log(dim('    sudo systemctl restart ccgram'));
         console.log(dim('    journalctl -u ccgram -f'));
     } else if (isMac) {
@@ -539,15 +464,22 @@ function printServiceInstructions(): void {
         if (!fs.existsSync(plistDir)) fs.mkdirSync(plistDir, { recursive: true });
         const plistPath: string = path.join(plistDir, 'com.ccgram.plist');
         fs.writeFileSync(plistPath, plist + '\n');
-        console.log(success(`Generated ${plistPath}`));
-        console.log();
-        console.log(dim('  Load/restart the service:'));
-        console.log(dim('    launchctl bootout gui/$(id -u)/com.ccgram 2>/dev/null'));
-        console.log(dim(`    launchctl bootstrap gui/$(id -u) ${plistPath}`));
+
+        // Auto-load the service
+        try {
+            execSync('launchctl bootout gui/$(id -u)/com.ccgram 2>/dev/null', { stdio: 'pipe' });
+        } catch {}
+        try {
+            execSync(`launchctl bootstrap gui/$(id -u) ${plistPath}`, { stdio: 'pipe' });
+            console.log('  ' + success('Bot service started'));
+        } catch {
+            console.log('  ' + warning('Could not auto-start service. Load manually:'));
+            console.log(dim(`    launchctl bootstrap gui/$(id -u) ${plistPath}`));
+        }
         console.log();
         console.log(dim('  Manage:'));
-        console.log(dim('    launchctl kickstart -k gui/$(id -u)/com.ccgram'));
-        console.log(dim(`    tail -f ${logsDir}/bot-stdout.log`));
+        console.log(dim('    launchctl kickstart -k gui/$(id -u)/com.ccgram   # restart'));
+        console.log(dim(`    tail -f ${logsDir}/bot-stdout.log                # logs`));
     } else {
         console.log(dim('  Run the bot with: npm start'));
         console.log(dim('  Or use a process manager like pm2:'));
@@ -582,11 +514,6 @@ function installToHome(sourceRoot: string): string {
         { src: 'config', dest: 'config', dir: true },
         { src: '.env.example', dest: '.env.example' },
     ];
-
-    // setup-i18n.json is optional (only needed for re-running setup)
-    if (fs.existsSync(path.join(sourceRoot, 'setup-i18n.json'))) {
-        filesToCopy.push({ src: 'setup-i18n.json', dest: 'setup-i18n.json' });
-    }
 
     for (const item of filesToCopy) {
         const srcPath = path.join(sourceRoot, item.src);
@@ -636,272 +563,141 @@ function installToHome(sourceRoot: string): string {
     if (missing.length > 0) {
         console.log(warning(`Missing files in ~/.ccgram/: ${missing.join(', ')}`));
     } else {
-        console.log(success(`Installed to ${CCGRAM_HOME}`));
+        console.log('  ' + success(`Installed to ${CCGRAM_HOME}`));
     }
 
     return CCGRAM_HOME;
 }
 
+// ─── Main ─────────────────────────────────────────────────────
+
 async function main(): Promise<void> {
     printHeader();
 
-    // Language selection first
-    const langChoice: SelectOption = await askSelect(bold(`${icons.globe} ${i18nData.en.selectLanguage}`), [
-        { label: 'English', value: 'en' },
-        { label: 'Chinese', value: 'zh' }
-    ], 0);
-    lang = langChoice.value;
-    i18n = i18nData[lang];
-
     // Install to ~/.ccgram/ for persistent hook paths
-    printSection('Installation', icons.gear);
     projectRoot = installToHome(PROJECT_ROOT);
     envPath = path.join(projectRoot, '.env');
     defaultSessionMap = path.join(projectRoot, 'src', 'data', 'session-map.json');
 
-    printHeader();
-    console.log(dim(`${i18n.projectRoot}: ${projectRoot}`));
-    console.log(dim(`${i18n.targetEnv}: ${envPath}`));
-
-    // Check tmux availability
+    // Check tmux availability + show paths
     checkTmux();
+    console.log(dim(`  Install path: ${projectRoot}`));
+    console.log(dim(`  Config: ${envPath}`));
 
     const existingEnv: Record<string, string> = loadExistingEnv();
 
-    // Basic Configuration
-    printSection('Basic Configuration', icons.gear);
+    // ─── Telegram ──────────────────────────────────────────
+    printSection('Telegram');
+    console.log(dim('  Create a bot with @BotFather and get your chat ID from @userinfobot'));
+    console.log();
 
-    const sessionMapPath: string = await ask(i18n.sessionMapPath, existingEnv.SESSION_MAP_PATH || defaultSessionMap);
-    let injectionMode: string = (await ask(i18n.injectionMode, existingEnv.INJECTION_MODE || 'pty')).toLowerCase();
-    if (!['tmux', 'pty'].includes(injectionMode)) {
-        console.log(warning(i18n.injectionModeInvalid));
-        injectionMode = 'pty';
-    }
-    const logLevel: string = await ask(i18n.logLevel, existingEnv.LOG_LEVEL || 'info');
+    const botToken: string = await ask('Bot token (from @BotFather)', existingEnv.TELEGRAM_BOT_TOKEN || '');
+    const chatId: string = await ask('Chat ID (from @userinfobot)', existingEnv.TELEGRAM_CHAT_ID || '');
 
-    // Email Configuration
-    const emailEnabled: boolean = await askYesNo(`${icons.email} ${i18n.enableEmail}`, existingEnv.EMAIL_ENABLED === 'true');
-    const email: Record<string, any> = {};
-    if (emailEnabled) {
-        printSection(i18n.emailConfig.title, icons.email);
+    const defaultProjectDirs = existingEnv.PROJECT_DIRS || `${os.homedir()}/projects,${os.homedir()}/tools`;
+    const projectDirs: string = await ask('Project directories, comma-separated', defaultProjectDirs);
 
-        // Email provider quick setup
-        const providerChoice: SelectOption = await askSelect(i18n.emailConfig.quickSetup, [
-            { label: i18n.emailConfig.gmail, value: 'gmail' },
-            { label: i18n.emailConfig.outlook, value: 'outlook' },
-            { label: i18n.emailConfig.qq, value: 'qq' },
-            { label: i18n.emailConfig['163'], value: '163' },
-            { label: dim(i18n.emailConfig.manual), value: 'manual' }
-        ], 0);
+    // ─── Advanced settings (single gate) ───────────────────
+    let groupId = existingEnv.TELEGRAM_GROUP_ID || '';
+    let whitelist = existingEnv.TELEGRAM_WHITELIST || '';
+    let webhookUrl = existingEnv.TELEGRAM_WEBHOOK_URL || '';
+    let webhookPort = existingEnv.TELEGRAM_WEBHOOK_PORT || '3001';
+    let forceIPv4 = existingEnv.TELEGRAM_FORCE_IPV4 === 'true';
+    let injectionMode = existingEnv.INJECTION_MODE || 'tmux';
+    let logLevel = existingEnv.LOG_LEVEL || 'info';
+    let sessionMapPath = existingEnv.SESSION_MAP_PATH || defaultSessionMap;
+    let advancedConfigured = false;
 
-        const emailPresets: Record<string, EmailPreset> = {
-            gmail: {
-                smtpHost: 'smtp.gmail.com',
-                smtpPort: '465',
-                smtpSecure: true,
-                imapHost: 'imap.gmail.com',
-                imapPort: '993',
-                imapSecure: true
-            },
-            outlook: {
-                smtpHost: 'smtp-mail.outlook.com',
-                smtpPort: '587',
-                smtpSecure: false,
-                imapHost: 'outlook.office365.com',
-                imapPort: '993',
-                imapSecure: true
-            },
-            qq: {
-                smtpHost: 'smtp.qq.com',
-                smtpPort: '465',
-                smtpSecure: true,
-                imapHost: 'imap.qq.com',
-                imapPort: '993',
-                imapSecure: true
-            },
-            '163': {
-                smtpHost: 'smtp.163.com',
-                smtpPort: '465',
-                smtpSecure: true,
-                imapHost: 'imap.163.com',
-                imapPort: '993',
-                imapSecure: true
-            }
-        };
-
-        if (providerChoice.value !== 'manual') {
-            const preset: EmailPreset = emailPresets[providerChoice.value];
-            console.log('\n' + info(i18n.emailConfig.setupInstructions[providerChoice.value]));
-
-            email.emailAddress = await ask(i18n.emailConfig.email, existingEnv.SMTP_USER || '');
-            email.appPassword = await ask(`${icons.key} ${i18n.emailConfig.appPassword}`, existingEnv.SMTP_PASS || '');
-
-            email.smtpHost = preset.smtpHost;
-            email.smtpPort = preset.smtpPort;
-            email.smtpSecure = preset.smtpSecure;
-            email.smtpUser = email.emailAddress;
-            email.smtpPass = email.appPassword;
-            email.emailFrom = email.emailAddress;
-            email.emailFromName = existingEnv.EMAIL_FROM_NAME || 'Claude Code Remote';
-            email.emailTo = email.emailAddress;
-            email.allowedSenders = email.emailAddress;
-
-            email.imapHost = preset.imapHost;
-            email.imapPort = preset.imapPort;
-            email.imapSecure = preset.imapSecure;
-            email.imapUser = email.emailAddress;
-            email.imapPass = email.appPassword;
-        } else {
-            // Manual configuration
-            console.log(dim('\nManual email configuration...'));
-            email.smtpHost = await ask(i18n.emailConfig.smtpHost, existingEnv.SMTP_HOST || 'smtp.gmail.com');
-            email.smtpPort = await ask(i18n.emailConfig.smtpPort, existingEnv.SMTP_PORT || '465');
-            email.smtpSecure = await askYesNo(i18n.emailConfig.smtpSecure, existingEnv.SMTP_SECURE === 'true' || existingEnv.SMTP_SECURE === undefined);
-            email.smtpUser = await ask(i18n.emailConfig.smtpUser, existingEnv.SMTP_USER || '');
-            email.smtpPass = await ask(i18n.emailConfig.smtpPass, existingEnv.SMTP_PASS || '');
-            email.emailFrom = await ask(i18n.emailConfig.emailFrom, existingEnv.EMAIL_FROM || email.smtpUser);
-            email.emailFromName = await ask(i18n.emailConfig.emailFromName, existingEnv.EMAIL_FROM_NAME || 'Claude Code Remote');
-            email.emailTo = await ask(i18n.emailConfig.emailTo, existingEnv.EMAIL_TO || email.smtpUser);
-            email.allowedSenders = await ask(i18n.emailConfig.allowedSenders, existingEnv.ALLOWED_SENDERS || email.emailTo);
-
-            const reuseImap: boolean = await askYesNo(i18n.emailConfig.reuseImap, true);
-            if (reuseImap) {
-                email.imapHost = email.smtpHost.replace('smtp', 'imap');
-                email.imapPort = '993';
-                email.imapSecure = true;
-                email.imapUser = email.smtpUser;
-                email.imapPass = email.smtpPass;
-            } else {
-                email.imapHost = await ask(i18n.emailConfig.imapHost, existingEnv.IMAP_HOST || '');
-                email.imapPort = await ask(i18n.emailConfig.imapPort, existingEnv.IMAP_PORT || '993');
-                email.imapSecure = await askYesNo(i18n.emailConfig.imapSecure, existingEnv.IMAP_SECURE === 'true' || existingEnv.IMAP_SECURE === undefined);
-                email.imapUser = await ask(i18n.emailConfig.imapUser, existingEnv.IMAP_USER || email.smtpUser || '');
-                email.imapPass = await ask(i18n.emailConfig.imapPass, existingEnv.IMAP_PASS || email.smtpPass || '');
-            }
+    console.log();
+    const showAdvanced: boolean = await askYesNo('Configure advanced settings?', false);
+    if (showAdvanced) {
+        advancedConfigured = true;
+        printSection('Advanced');
+        groupId = await ask('Group chat ID (optional)', groupId);
+        whitelist = await ask('Allowed user IDs, comma-separated (optional)', whitelist);
+        webhookUrl = await ask('Webhook URL (leave empty for long-polling)', webhookUrl);
+        if (webhookUrl) {
+            webhookPort = await ask('Webhook port', webhookPort);
         }
-
-        email.checkInterval = await ask(i18n.emailConfig.checkInterval, existingEnv.CHECK_INTERVAL || '20');
+        forceIPv4 = await askYesNo('Force IPv4 for Telegram API?', forceIPv4);
+        injectionMode = (await ask('Injection mode (tmux or pty)', injectionMode)).toLowerCase();
+        if (!['tmux', 'pty'].includes(injectionMode)) {
+            console.log('  ' + warning('Invalid injection mode, defaulting to tmux'));
+            injectionMode = 'tmux';
+        }
+        logLevel = await ask('Log level (debug, info, warn, error)', logLevel);
+        sessionMapPath = await ask('Session map path', sessionMapPath);
     }
 
-    // Telegram Configuration
-    const telegramEnabled: boolean = await askYesNo(`${icons.telegram} ${i18n.enableTelegram}`, existingEnv.TELEGRAM_ENABLED === 'true');
-    const telegram: Record<string, any> = {};
-    if (telegramEnabled) {
-        printSection('Telegram Configuration', icons.telegram);
-        telegram.botToken = await ask(i18n.telegramConfig.botToken, existingEnv.TELEGRAM_BOT_TOKEN || '');
-        telegram.chatId = await ask(i18n.telegramConfig.chatId, existingEnv.TELEGRAM_CHAT_ID || '');
-        telegram.groupId = await ask(i18n.telegramConfig.groupId, existingEnv.TELEGRAM_GROUP_ID || '');
-        telegram.whitelist = await ask(i18n.telegramConfig.whitelist, existingEnv.TELEGRAM_WHITELIST || '');
-        telegram.webhookUrl = await ask(i18n.telegramConfig.webhookUrl, existingEnv.TELEGRAM_WEBHOOK_URL || '');
-        telegram.webhookPort = await ask(i18n.telegramConfig.webhookPort, existingEnv.TELEGRAM_WEBHOOK_PORT || '3001');
-        telegram.forceIPv4 = await askYesNo(i18n.telegramConfig.forceIPv4, existingEnv.TELEGRAM_FORCE_IPV4 === 'true');
-    }
-
-    // LINE Configuration
-    const lineEnabled: boolean = await askYesNo(`${icons.line} ${i18n.enableLine}`, existingEnv.LINE_ENABLED === 'true');
-    const line: Record<string, any> = {};
-    if (lineEnabled) {
-        printSection('LINE Configuration', icons.line);
-        line.channelAccessToken = await ask(i18n.lineConfig.channelAccessToken, existingEnv.LINE_CHANNEL_ACCESS_TOKEN || '');
-        line.channelSecret = await ask(i18n.lineConfig.channelSecret, existingEnv.LINE_CHANNEL_SECRET || '');
-        line.userId = await ask(i18n.lineConfig.userId, existingEnv.LINE_USER_ID || '');
-        line.groupId = await ask(i18n.lineConfig.groupId, existingEnv.LINE_GROUP_ID || '');
-        line.whitelist = await ask(i18n.lineConfig.whitelist, existingEnv.LINE_WHITELIST || '');
-        line.webhookPort = await ask(i18n.lineConfig.webhookPort, existingEnv.LINE_WEBHOOK_PORT || '3000');
-    }
-
+    // ─── Build env values ──────────────────────────────────
     const envValues: Record<string, string> = {
-        EMAIL_ENABLED: emailEnabled ? 'true' : 'false',
-        ...(emailEnabled ? {
-            SMTP_HOST: email.smtpHost,
-            SMTP_PORT: email.smtpPort,
-            SMTP_SECURE: email.smtpSecure ? 'true' : 'false',
-            SMTP_USER: email.smtpUser,
-            SMTP_PASS: email.smtpPass,
-            EMAIL_FROM: email.emailFrom,
-            EMAIL_FROM_NAME: email.emailFromName,
-            IMAP_HOST: email.imapHost,
-            IMAP_PORT: email.imapPort,
-            IMAP_SECURE: email.imapSecure ? 'true' : 'false',
-            IMAP_USER: email.imapUser,
-            IMAP_PASS: email.imapPass,
-            EMAIL_TO: email.emailTo,
-            ALLOWED_SENDERS: email.allowedSenders,
-            CHECK_INTERVAL: email.checkInterval
-        } : {}),
-        TELEGRAM_ENABLED: telegramEnabled ? 'true' : 'false',
-        ...(telegramEnabled ? {
-            TELEGRAM_BOT_TOKEN: telegram.botToken,
-            TELEGRAM_CHAT_ID: telegram.chatId,
-            TELEGRAM_GROUP_ID: telegram.groupId,
-            TELEGRAM_WHITELIST: telegram.whitelist,
-            TELEGRAM_WEBHOOK_URL: telegram.webhookUrl,
-            TELEGRAM_WEBHOOK_PORT: telegram.webhookPort,
-            TELEGRAM_FORCE_IPV4: telegram.forceIPv4 ? 'true' : 'false'
-        } : {}),
-        LINE_ENABLED: lineEnabled ? 'true' : 'false',
-        ...(lineEnabled ? {
-            LINE_CHANNEL_ACCESS_TOKEN: line.channelAccessToken,
-            LINE_CHANNEL_SECRET: line.channelSecret,
-            LINE_USER_ID: line.userId,
-            LINE_GROUP_ID: line.groupId,
-            LINE_WHITELIST: line.whitelist,
-            LINE_WEBHOOK_PORT: line.webhookPort
-        } : {}),
-        SESSION_MAP_PATH: sessionMapPath,
-        INJECTION_MODE: injectionMode,
-        LOG_LEVEL: logLevel
+        TELEGRAM_ENABLED: 'true',
+        TELEGRAM_BOT_TOKEN: botToken,
+        TELEGRAM_CHAT_ID: chatId,
+        PROJECT_DIRS: projectDirs,
     };
 
-    printSection('Saving Configuration', icons.star);
+    // Only write advanced keys if user configured them or they existed before
+    if (groupId) envValues.TELEGRAM_GROUP_ID = groupId;
+    if (whitelist) envValues.TELEGRAM_WHITELIST = whitelist;
+    if (webhookUrl) envValues.TELEGRAM_WEBHOOK_URL = webhookUrl;
+    if (webhookUrl && webhookPort) envValues.TELEGRAM_WEBHOOK_PORT = webhookPort;
+    if (forceIPv4) envValues.TELEGRAM_FORCE_IPV4 = 'true';
+    if (advancedConfigured || existingEnv.INJECTION_MODE) envValues.INJECTION_MODE = injectionMode;
+    if (advancedConfigured || existingEnv.SESSION_MAP_PATH) envValues.SESSION_MAP_PATH = sessionMapPath;
+    if (logLevel !== 'info' || existingEnv.LOG_LEVEL) envValues.LOG_LEVEL = logLevel;
+
+    // ─── Write .env ────────────────────────────────────────
     const savedEnvPath: string = writeEnvFile(envValues, existingEnv);
-    console.log('\n' + success(`${i18n.envSaved} ${savedEnvPath}`));
 
-    // Validate bot token if Telegram was configured
-    if (telegramEnabled && telegram.botToken) {
-        await validateBotToken(telegram.botToken);
+    // ─── Validate bot token ────────────────────────────────
+    let botUsername: string | undefined;
+    if (botToken) {
+        const result = await validateBotToken(botToken);
+        botUsername = result.username;
     }
 
-    const updateHooks: boolean = await askYesNo(i18n.updateHooks, true);
-    if (updateHooks) {
-        const { settingsPath, existing, backupPath }: EnsureHooksResult = ensureHooksFile();
-        if (backupPath) {
-            console.log(warning(`${i18n.invalidSettings} ${backupPath}`));
-        }
-        console.log(success(`${existing ? i18n.hooksUpdated : i18n.hooksCreated} ${settingsPath}`));
-        for (const def of HOOK_DEFINITIONS) {
-            const label: string = def.matcher ? `${def.event} (${def.matcher})` : def.event;
-            console.log(dim(`   ${label} \u2192 ${makeHookCommand(def)}`));
-        }
-    } else {
-        console.log(warning(i18n.hooksSkipped));
+    // ─── Install hooks (automatic, no prompt) ──────────────
+    const { settingsPath, existing, backupPath }: EnsureHooksResult = ensureHooksFile();
+    if (backupPath) {
+        console.log('  ' + warning(`Invalid settings.json backed up to ${backupPath}`));
     }
 
-    // Service setup instructions
+    // ─── Generate service file ─────────────────────────────
     printServiceInstructions();
 
-    // Print copy-paste JSON block
+    // ─── Print hooks JSON ──────────────────────────────────
     const hooksJSON: Record<string, HookEntry[]> = buildHooksJSON();
-    console.log('\n' + bold(lang === 'en'
-        ? 'Copy-paste hooks for ~/.claude/settings.json:'
-        : 'Copy-paste hooks for ~/.claude/settings.json:'));
-    console.log(color('\u2500'.repeat(60), 'gray'));
-    console.log(dim(JSON.stringify({ hooks: hooksJSON }, null, 2)));
-    console.log(color('\u2500'.repeat(60), 'gray'));
+    console.log('\n  ' + bold('Hooks for ~/.claude/settings.json:'));
+    console.log(color('  ' + '\u2500'.repeat(55), 'gray'));
+    const jsonLines = JSON.stringify({ hooks: hooksJSON }, null, 2).split('\n');
+    for (const line of jsonLines) {
+        console.log(dim('  ' + line));
+    }
+    console.log(color('  ' + '\u2500'.repeat(55), 'gray'));
 
+    // Close readline before summary output
     rl.close();
 
-    console.log('\n' + bold(color('\u2500'.repeat(60), 'gray')));
-    console.log(bold(color(`${icons.rocket} ${i18n.setupComplete}`, 'green')));
-    console.log(color('\u2500'.repeat(60), 'gray'));
-    console.log(`  ${icons.bullet} ${i18n.nextStep1}`);
-    console.log(`  ${icons.bullet} ${i18n.nextStep2}`);
+    // ─── Summary ───────────────────────────────────────────
+    printSection('Complete');
+    console.log('  ' + success(`Installed to ${projectRoot}`));
+    console.log('  ' + success(`Saved ${savedEnvPath}`));
+    if (botUsername) {
+        console.log('  ' + success(`Bot verified: @${botUsername}`));
+    }
+    console.log('  ' + success(`Hooks ${existing ? 'updated' : 'created'}: ${settingsPath}`));
+    console.log('  ' + success('Service generated'));
+    console.log();
+    console.log('  ' + bold('Next steps:'));
+    console.log('    1. Open Telegram and message your bot');
+    console.log('    2. Start Claude Code in a tmux session');
     console.log();
 }
 
 main().catch((err: unknown) => {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(error(`${i18n?.setupFailed || 'Setup failed:'} ${message}`));
+    console.error(error(`Setup failed: ${message}`));
     rl.close();
     process.exit(1);
 });

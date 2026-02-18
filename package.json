@@ -1,21 +1,36 @@
 {
   "name": "ccgram",
-  "version": "1.0.0",
+  "version": "0.1.0-alpha",
   "description": "Control Claude Code from Telegram",
-  "main": "workspace-telegram-bot.js",
+  "main": "dist/workspace-telegram-bot.js",
+  "bin": {
+    "ccgram": "./dist/cli.js"
+  },
+  "files": [
+    "dist/",
+    "config/",
+    "src/types/",
+    "ccgram.service",
+    ".env.example",
+    "LICENSE",
+    "README.md"
+  ],
   "scripts": {
-    "start": "node workspace-telegram-bot.js",
-    "setup": "node setup.js",
-    "config": "node claude-remote-config.js",
-    "daemon:start": "node claude-remote.js daemon start",
-    "daemon:stop": "node claude-remote.js daemon stop",
-    "daemon:status": "node claude-remote.js daemon status",
-    "relay:pty": "node start-relay-pty.js",
-    "relay:start": "INJECTION_MODE=pty node src/relay/relay-pty.js",
-    "telegram": "node start-telegram-webhook.js",
-    "line": "node start-line-webhook.js",
-    "webhooks": "node start-all-webhooks.js",
-    "test": "vitest run"
+    "start": "node dist/workspace-telegram-bot.js",
+    "setup": "node dist/setup.js",
+    "config": "node dist/src/tools/config-manager.js",
+    "daemon:start": "node dist/claude-remote.js daemon start",
+    "daemon:stop": "node dist/claude-remote.js daemon stop",
+    "daemon:status": "node dist/claude-remote.js daemon status",
+    "relay:pty": "node dist/start-relay-pty.js",
+    "relay:start": "INJECTION_MODE=pty node dist/src/relay/relay-pty.js",
+    "telegram": "node dist/start-telegram-webhook.js",
+    "line": "node dist/start-line-webhook.js",
+    "webhooks": "node dist/start-all-webhooks.js",
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build && npm test"
   },
   "keywords": [
     "ccgram",
@@ -58,6 +73,8 @@
     "pino-pretty": "^13.0.0"
   },
   "devDependencies": {
+    "@types/node": "~22.15.0",
+    "typescript": "~5.7.3",
     "vitest": "^4.0.18"
   }
 }

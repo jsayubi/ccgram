@@ -408,7 +408,7 @@ Currently the only install method is `git clone`. Publishing to npm enables one-
 
 ---
 
-## Story 16: Health Check & Status Endpoint
+## Story 16: Health Check & Status Endpoint ✅
 
 **As a** user running CCGram as a background service,
 **I want** a way to check if the bot is healthy,
@@ -418,17 +418,17 @@ Currently the only install method is `git clone`. Publishing to npm enables one-
 The bot runs as a long-polling process. If the Telegram API connection drops or the process hangs, there's no external way to detect it. A simple HTTP health endpoint would enable monitoring via uptime tools, systemd watchdog, or custom scripts.
 
 ### Acceptance Criteria
-- [ ] Optional HTTP health endpoint on configurable port (default: disabled)
-- [ ] Returns: uptime, last poll time, active workspaces, pending prompts count
-- [ ] `HEALTH_PORT` env var to enable (e.g., `HEALTH_PORT=8080`)
-- [ ] Works with standard monitoring tools (returns 200 OK with JSON)
+- [x] Optional HTTP health endpoint on configurable port (default: disabled)
+- [x] Returns: uptime, last poll time, active workspaces, pending prompts count
+- [x] `HEALTH_PORT` env var to enable (e.g., `HEALTH_PORT=8080`)
+- [x] Works with standard monitoring tools (returns 200 OK with JSON)
 
 ### Tasks
-- [ ] Add lightweight HTTP server (Node built-in `http`, no express needed)
-- [ ] Track last successful Telegram poll timestamp
-- [ ] Expose `/health` endpoint with status JSON
-- [ ] Add `HEALTH_PORT` to `.env.full-example`
-- [ ] Return 503 if last poll was >60s ago (stale connection)
+- [x] Add lightweight HTTP server (Node built-in `http`, no express needed)
+- [x] Track last successful Telegram poll timestamp
+- [x] Expose `/health` endpoint with status JSON
+- [x] Add `HEALTH_PORT` to `.env.full-example`
+- [x] Return 503 if last poll was >60s ago (stale connection)
 
 ---
 
@@ -451,6 +451,6 @@ The bot runs as a long-polling process. If the Telegram API connection drops or 
 | P2 | ~~Story 13: Replace Axios with HTTPS~~ | ~~1 hour~~ | ✅ Done |
 | P3 | Story 11: TypeScript Migration | 2-3 days | Long-term maintainability |
 | P3 | Story 15: NPM Publishing / npx | 3 hours | Zero-clone install |
-| P3 | Story 16: Health Check Endpoint | 1 hour | Production monitoring |
+| P3 | ~~Story 16: Health Check Endpoint~~ | ~~1 hour~~ | ✅ Done |
 
 P0 stories (1-4) can be done in an afternoon and cover 80% of the install friction.

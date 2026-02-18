@@ -68,6 +68,8 @@ if (!CHAT_ID || CHAT_ID === 'YOUR_CHAT_ID_HERE') {
 }
 
 let lastUpdateId = 0;
+let lastPollTime = null;   // timestamp of last successful getUpdates call
+const startTime = Date.now();
 const activeTypingIntervals = new Map(); // workspace → intervalId
 
 // ── Telegram API helpers ────────────────────────────────────────
@@ -1030,6 +1032,8 @@ async function poll() {
         allowed_updates: ['message', 'callback_query'],
       });
 
+      lastPollTime = Date.now();
+
       for (const update of updates) {
         lastUpdateId = update.update_id;
 
@@ -1079,6 +1083,51 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// ── Health check server ──────────────────────────────────────────
+
+function startHealthServer(port) {
+  const http = require('http');
+  const { PROMPTS_DIR } = require('./prompt-bridge');
+
+  const server = http.createServer((req, res) => {
+    if (req.url !== '/health') {
+      res.writeHead(404);
+      res.end('Not found');
+      return;
+    }
+
+    const now = Date.now();
+    const pollAge = lastPollTime ? now - lastPollTime : null;
+    const stale = pollAge === null || pollAge > 60000;
+
+    const sessions = listActiveSessions();
+    let pendingCount = 0;
+    try {
+      const files = fs.readdirSync(PROMPTS_DIR).filter(f => f.startsWith('pending-'));
+      pendingCount = files.length;
+    } catch {}
+
+    const body = JSON.stringify({
+      status: stale ? 'unhealthy' : 'ok',
+      uptime: Math.floor((now - startTime) / 1000),
+      lastPollAge: pollAge !== null ? Math.floor(pollAge / 1000) : null,
+      activeSessions: sessions.length,
+      pendingPrompts: pendingCount,
+    }, null, 2);
+
+    res.writeHead(stale ? 503 : 200, { 'Content-Type': 'application/json' });
+    res.end(body);
+  });
+
+  server.listen(port, '127.0.0.1', () => {
+    logger.info(`Health endpoint: http://127.0.0.1:${port}/health`);
+  });
+
+  server.on('error', (err) => {
+    logger.warn(`Health server error: ${err.message}`);
+  });
+}
+
 // ── Startup ─────────────────────────────────────────────────────
 
 async function start() {
@@ -1102,6 +1151,12 @@ async function start() {
     logger.info('Webhook cleared, using long polling');
   } catch (err) {
     logger.warn(`Could not delete webhook: ${err.message}`);
+  }
+
+  // Start optional health check server
+  const healthPort = parseInt(process.env.HEALTH_PORT, 10);
+  if (healthPort) {
+    startHealthServer(healthPort);
   }
 
   await poll();

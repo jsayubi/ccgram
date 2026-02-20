@@ -258,23 +258,23 @@ Upstream fork has legacy files, Chinese-only comments in config, test scripts mi
 The codebase is 100% JavaScript with no type annotations. The main bot file alone is 1,100+ lines. Real bugs have already been caused by type mismatches — the workspace name mismatch (bot created `typing-assistant`, hook returned `claude-remote`) would have been caught by a typed `workspace: string` interface. Callback data parsing, pending file shapes, and tmux session objects are all stringly-typed and fragile.
 
 ### Acceptance Criteria
-- [ ] All core files converted to TypeScript (`.ts`)
-- [ ] Interfaces defined for: pending prompt, session map entry, callback data, workspace config
-- [ ] `tsconfig.json` with strict mode enabled
-- [ ] Build step outputs CommonJS `.js` to `dist/`
-- [ ] `npm start` runs the compiled output
-- [ ] Source maps enabled for debugging
+- [x] All core files converted to TypeScript (`.ts`)
+- [x] Interfaces defined for: pending prompt, session map entry, callback data, workspace config
+- [x] `tsconfig.json` with strict mode enabled
+- [x] Build step outputs CommonJS `.js` to `dist/`
+- [x] `npm start` runs the compiled output
+- [x] Source maps enabled for debugging
 
 ### Tasks
-- [ ] Add `typescript` and `@types/node` as devDependencies
-- [ ] Create `tsconfig.json` (target ES2022, module CommonJS, strict: true, outDir: dist/)
-- [ ] Define core interfaces: `PendingPrompt`, `SessionEntry`, `WorkspaceConfig`, `CallbackAction`
-- [ ] Convert `prompt-bridge.js` → `prompt-bridge.ts` (smallest, good starting point)
-- [ ] Convert `workspace-router.js` → `workspace-router.ts`
-- [ ] Convert hook files: `permission-hook.ts`, `enhanced-hook-notify.ts`, `question-notify.ts`
-- [ ] Convert `workspace-telegram-bot.js` → `workspace-telegram-bot.ts`
-- [ ] Add `"build": "tsc"` and update `"start": "node dist/workspace-telegram-bot.js"`
-- [ ] Update CI to include build step
+- [x] Add `typescript` and `@types/node` as devDependencies
+- [x] Create `tsconfig.json` (target ES2022, module CommonJS, strict: true, outDir: dist/)
+- [x] Define core interfaces: `PendingPrompt`, `SessionEntry`, `WorkspaceConfig`, `CallbackAction`
+- [x] Convert `prompt-bridge.js` → `prompt-bridge.ts` (smallest, good starting point)
+- [x] Convert `workspace-router.js` → `workspace-router.ts`
+- [x] Convert hook files: `permission-hook.ts`, `enhanced-hook-notify.ts`, `question-notify.ts`
+- [x] Convert `workspace-telegram-bot.js` → `workspace-telegram-bot.ts`
+- [x] Add `"build": "tsc"` and update `"start": "node dist/workspace-telegram-bot.js"`
+- [x] Update CI to include build step
 
 ### Key Types to Define
 ```typescript
@@ -391,20 +391,20 @@ The core bot uses `console.log` and `console.error` with ad-hoc formatting. Hook
 Currently the only install method is `git clone`. Publishing to npm enables one-command install, automatic updates via `npm update`, and `npx` for zero-install setup. Since the core bot has zero npm deps, the published package would be very lightweight.
 
 ### Acceptance Criteria
-- [ ] `ccgram` package published to npm registry
-- [ ] `npx ccgram init` runs interactive setup
-- [ ] `npx ccgram start` starts the bot
-- [ ] `npx ccgram hooks` prints the Claude hooks JSON for copy-paste
-- [ ] Package size under 100KB (no `node_modules` bundled)
-- [ ] Version follows semver
+- [x] `npx ccgram init` runs interactive setup
+- [x] `npx ccgram start` starts the bot
+- [x] `npx ccgram hooks` prints the Claude hooks JSON for copy-paste
+- [x] Package size under 100KB (no `node_modules` bundled)
+- [x] Version follows semver
+- [ ] `ccgram` name registered on npm and package published (deferred to user after TypeScript migration)
 
 ### Tasks
-- [ ] Add `"bin": { "ccgram": "./cli.js" }` to `package.json`
-- [ ] Create `cli.js` entry point with subcommands: `init`, `start`, `hooks`, `status`
-- [ ] Set `"files"` array to include only necessary files (exclude tests, docs, examples)
-- [ ] Register `ccgram` name on npm
-- [ ] Add `"prepublishOnly": "npm test"` script
-- [ ] Set up npm publish workflow in GitHub Actions
+- [x] Add `"bin": { "ccgram": "./cli.js" }` to `package.json`
+- [x] Create `cli.js` entry point with subcommands: `init`, `start`, `hooks`, `status`
+- [x] Set `"files"` array to include only necessary files (exclude tests, docs, examples)
+- [x] Add `"prepublishOnly": "npm test"` script
+- [x] Set up npm publish workflow in GitHub Actions (`.github/workflows/publish.yml`, triggers on `v*.*.*` tags)
+- [ ] Register `ccgram` name on npm and run `npm publish` (user action — after TypeScript migration)
 
 ---
 
@@ -449,8 +449,8 @@ The bot runs as a long-polling process. If the Telegram API connection drops or 
 | P2 | ~~Story 10: Clean Codebase~~ | ~~2 hours~~ | ✅ Done |
 | P2 | ~~Story 12: Structured Logging~~ | ~~2 hours~~ | ✅ Done |
 | P2 | ~~Story 13: Replace Axios with HTTPS~~ | ~~1 hour~~ | ✅ Done |
-| P3 | Story 11: TypeScript Migration | 2-3 days | Long-term maintainability |
-| P3 | Story 15: NPM Publishing / npx | 3 hours | Zero-clone install |
+| P3 | ~~Story 11: TypeScript Migration~~ | ~~2-3 days~~ | ✅ Done |
+| P3 | ~~Story 15: NPM Publishing / npx~~ | ~~3 hours~~ | ✅ Done (publish deferred to user) |
 | P3 | ~~Story 16: Health Check Endpoint~~ | ~~1 hour~~ | ✅ Done |
 
 P0 stories (1-4) can be done in an afternoon and cover 80% of the install friction.

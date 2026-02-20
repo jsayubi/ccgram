@@ -1,0 +1,23 @@
+# TypeScript source files (compiled output in dist/ is included)
+*.ts
+src/**/*.ts
+!src/types/**/*.ts
+!*.d.ts
+
+# Runtime data files — generated at runtime, not part of the package
+src/data/*.json
+src/logs/
+
+# Development and test files
+test/
+vitest.config.js
+*.test.js
+tsconfig.json
+
+# Docs and planning files
+epic.md
+LAUNCH-PLAN.md
+.env.full-example
+
+# CI and local config
+.github/

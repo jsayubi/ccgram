@@ -12,7 +12,7 @@ After=network.target
 Type=simple
 User=YOUR_USERNAME
 WorkingDirectory=/home/YOUR_USERNAME/tools/ccgram
-ExecStart=/usr/bin/node workspace-telegram-bot.js
+ExecStart=/usr/bin/node dist/workspace-telegram-bot.js
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production

@@ -22,6 +22,7 @@ import https from 'https';
 import { execSync } from 'child_process';
 import { extractWorkspaceName, trackNotificationMessage } from './workspace-router';
 import { generatePromptId, writePending, cleanPrompt, PROMPTS_DIR } from './prompt-bridge';
+import { isUserActiveAtTerminal } from './src/utils/active-check';
 import type { InlineKeyboardMarkup, TelegramMessage, PermissionHookOutput } from './src/types';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -60,11 +61,23 @@ async function main(): Promise<void> {
     return;
   }
 
+  // If user is actively at the terminal AND this wasn't injected from Telegram,
+  // exit without a decision so Claude Code shows its own permission UI locally.
+  // Uses a SHORT 60s threshold (vs the default 300s used by notification hooks):
+  // permission requests are blocking — if the user stepped away even briefly,
+  // Telegram must handle it or Claude is stuck waiting with no way to respond.
+  const typingActivePath = path.join(PROJECT_ROOT, 'src/data', 'typing-active');
+  const isTelegramInjected = fs.existsSync(typingActivePath);
+  if (!isTelegramInjected && isUserActiveAtTerminal(60)) {
+    debugLog(`[skip] User is at terminal (within 60s) — deferring to Claude Code's own permission UI`);
+    return;
+  }
+
   const toolInput = (payload.tool_input || {}) as Record<string, unknown>;
   const cwd = (payload.cwd as string) || process.cwd();
   const workspace = extractWorkspaceName(cwd)!;
   const promptId = generatePromptId();
-  const tmuxSession = detectTmuxSession();
+  const tmuxSession = detectSessionName(cwd);
 
   const isPlan = toolName === 'ExitPlanMode';
 
@@ -169,6 +182,7 @@ async function main(): Promise<void> {
           behavior: decision,
         },
       },
+      systemMessage: `Decision received via Telegram: user ${decision}ed`,
     };
 
     const outputStr = JSON.stringify(output);
@@ -286,15 +300,18 @@ function readStdin(): Promise<string> {
   });
 }
 
-function detectTmuxSession(): string | null {
+function detectSessionName(cwd: string): string | null {
+  // 1. Try tmux (existing behaviour)
   if (process.env.TMUX) {
     try {
       return execSync('tmux display-message -p "#S"', { encoding: 'utf8' }).trim();
-    } catch {
-      return null;
-    }
+    } catch {}
   }
-  return null;
+  // 2. Derive from CWD — apply the same sanitization /new uses for session names
+  // (dots, colons, spaces → hyphens) so the name matches the PTY handle key
+  const raw = extractWorkspaceName(cwd);
+  if (!raw) return null;
+  return raw.replace(/[.:\s]/g, '-');
 }
 
 function formatToolDescription(toolName: string, toolInput: Record<string, unknown>): string {

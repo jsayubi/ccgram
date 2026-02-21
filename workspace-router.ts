@@ -131,11 +131,12 @@ function listActiveSessions(): Array<{ workspace: string; token: string; session
  * Register or update a session in the map.
  * Called by the hook notifier when Claude starts/stops.
  */
-function upsertSession({ cwd, tmuxSession, status, sessionId }: {
+function upsertSession({ cwd, tmuxSession, status, sessionId, sessionType }: {
   cwd: string;
   tmuxSession: string;
   status: string;
   sessionId?: string | null;
+  sessionType?: 'tmux' | 'pty';
 }): { token: string; workspace: string | null } {
   const map = readSessionMap();
   const workspace = extractWorkspaceName(cwd);
@@ -153,8 +154,12 @@ function upsertSession({ cwd, tmuxSession, status, sessionId }: {
 
   const token = existingToken || generateToken();
 
+  // Preserve existing sessionType if a new one isn't explicitly provided
+  const resolvedSessionType = sessionType ?? (existingToken ? map[existingToken].sessionType : undefined);
+
   map[token] = {
-    type: 'pty',
+    type: resolvedSessionType || 'tmux',
+    ...(resolvedSessionType !== undefined ? { sessionType: resolvedSessionType } : {}),
     createdAt: existingToken ? map[existingToken].createdAt : now,
     expiresAt,
     cwd,

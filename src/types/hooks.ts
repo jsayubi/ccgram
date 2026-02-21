@@ -46,4 +46,5 @@ export interface PermissionHookOutput {
       behavior: 'allow' | 'deny';
     };
   };
+  systemMessage?: string;
 }

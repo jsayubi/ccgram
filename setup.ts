@@ -47,10 +47,14 @@ let defaultSessionMap: string = path.join(PROJECT_ROOT, 'src', 'data', 'session-
 
 // Hook definitions for Claude Code integration
 const HOOK_DEFINITIONS: HookDefinition[] = [
-    { event: 'PermissionRequest', script: 'permission-hook.js', timeout: 120 },
-    { event: 'PreToolUse', script: 'question-notify.js', timeout: 5, matcher: 'AskUserQuestion' },
-    { event: 'Stop', script: 'enhanced-hook-notify.js', args: 'completed', timeout: 5 },
-    { event: 'Notification', script: 'enhanced-hook-notify.js', args: 'waiting', timeout: 5, matcher: 'permission_prompt' },
+    { event: 'PermissionRequest',  script: 'permission-hook.js',        timeout: 120 },
+    { event: 'PreToolUse',         script: 'question-notify.js',         timeout: 5,  matcher: 'AskUserQuestion' },
+    { event: 'Stop',               script: 'enhanced-hook-notify.js',    args: 'completed',     timeout: 5 },
+    { event: 'Notification',       script: 'enhanced-hook-notify.js',    args: 'waiting',       timeout: 5, matcher: 'permission_prompt' },
+    { event: 'UserPromptSubmit',   script: 'user-prompt-hook.js',        timeout: 2 },
+    { event: 'SessionStart',       script: 'enhanced-hook-notify.js',    args: 'session-start', timeout: 5 },
+    { event: 'SessionEnd',         script: 'enhanced-hook-notify.js',    args: 'session-end',   timeout: 5 },
+    { event: 'SubagentStop',       script: 'enhanced-hook-notify.js',    args: 'subagent-done', timeout: 5 },
 ];
 
 // ANSI color codes
@@ -205,8 +209,9 @@ function checkTmux(): boolean {
         return true;
     } catch {
         const isMac: boolean = process.platform === 'darwin';
-        console.log('  ' + warning('tmux is not installed \u2014 required for keystroke injection'));
-        console.log(dim(`     Install: ${isMac ? 'brew install tmux' : 'sudo apt install tmux'}`));
+        console.log('  ' + warning('tmux not found.'));
+        console.log(dim('     Without tmux, /new starts headless PTY sessions (Telegram-only control).'));
+        console.log(dim(`     For full terminal+Telegram experience: ${isMac ? 'brew install tmux' : 'sudo apt install tmux'}`));
         return false;
     }
 }
@@ -261,7 +266,8 @@ function writeEnvFile(values: Record<string, string>, existingEnv: Record<string
         'TELEGRAM_WHITELIST', 'TELEGRAM_WEBHOOK_URL', 'TELEGRAM_WEBHOOK_PORT',
         'TELEGRAM_FORCE_IPV4',
         'PROJECT_DIRS',
-        'SESSION_MAP_PATH', 'INJECTION_MODE', 'CLAUDE_CLI_PATH', 'LOG_LEVEL'
+        'SESSION_MAP_PATH', 'INJECTION_MODE', 'CLAUDE_CLI_PATH', 'LOG_LEVEL',
+        'ACTIVE_THRESHOLD_SECONDS'
     ];
 
     // Merge: new values override existing, keep any extra keys user already had
@@ -606,6 +612,7 @@ async function main(): Promise<void> {
     let injectionMode = existingEnv.INJECTION_MODE || 'tmux';
     let logLevel = existingEnv.LOG_LEVEL || 'info';
     let sessionMapPath = existingEnv.SESSION_MAP_PATH || defaultSessionMap;
+    let activeThreshold = existingEnv.ACTIVE_THRESHOLD_SECONDS || '300';
     let advancedConfigured = false;
 
     console.log();
@@ -627,6 +634,7 @@ async function main(): Promise<void> {
         }
         logLevel = await ask('Log level (debug, info, warn, error)', logLevel);
         sessionMapPath = await ask('Session map path', sessionMapPath);
+        activeThreshold = await ask('Active threshold in seconds (suppress notifications when working at terminal)', activeThreshold);
     }
 
     // ─── Build env values ──────────────────────────────────
@@ -646,6 +654,7 @@ async function main(): Promise<void> {
     if (advancedConfigured || existingEnv.INJECTION_MODE) envValues.INJECTION_MODE = injectionMode;
     if (advancedConfigured || existingEnv.SESSION_MAP_PATH) envValues.SESSION_MAP_PATH = sessionMapPath;
     if (logLevel !== 'info' || existingEnv.LOG_LEVEL) envValues.LOG_LEVEL = logLevel;
+    if (activeThreshold !== '300' || existingEnv.ACTIVE_THRESHOLD_SECONDS) envValues.ACTIVE_THRESHOLD_SECONDS = activeThreshold;
 
     // ─── Write .env ────────────────────────────────────────
     const savedEnvPath: string = writeEnvFile(envValues, existingEnv);

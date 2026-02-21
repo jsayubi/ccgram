@@ -21,6 +21,7 @@ require('dotenv').config({ path: path.join(PROJECT_ROOT, '.env'), quiet: true })
 import https from 'https';
 import { extractWorkspaceName, trackNotificationMessage } from './workspace-router';
 import { generatePromptId, writePending } from './prompt-bridge';
+import { isUserActiveAtTerminal } from './src/utils/active-check';
 import type { AskUserQuestionItem, InlineKeyboardMarkup, InlineKeyboardButton, TelegramMessage } from './src/types';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -38,6 +39,12 @@ async function main(): Promise<void> {
   // appears first in Telegram. The user must click Allow before answering.
 
   const raw = await readStdin();
+
+  // Skip Telegram notification if user is actively working at the terminal.
+  // They'll answer the question directly in the terminal UI.
+  if (isUserActiveAtTerminal()) {
+    return;
+  }
 
   // Delay so permission notification appears first in Telegram
   await new Promise<void>(r => setTimeout(r, 2000));
@@ -58,8 +65,8 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Detect tmux session for keystroke injection
-  const tmuxSession = detectTmuxSession();
+  // Detect session name for keystroke injection (tmux preferred, CWD-derived fallback)
+  const tmuxSession = detectSessionName(cwd);
 
   const totalQuestions = questions.length;
 
@@ -259,16 +266,19 @@ function readStdin(): Promise<string> {
   });
 }
 
-function detectTmuxSession(): string | null {
+function detectSessionName(cwd: string): string | null {
+  // 1. Try tmux (existing behaviour)
   if (process.env.TMUX) {
     try {
       const { execSync } = require('child_process');
       return execSync('tmux display-message -p "#S"', { encoding: 'utf8' }).trim();
-    } catch {
-      return null;
-    }
+    } catch {}
   }
-  return null;
+  // 2. Derive from CWD — apply the same sanitization /new uses for session names
+  // (dots, colons, spaces → hyphens) so the name matches the PTY handle key
+  const raw = extractWorkspaceName(cwd);
+  if (!raw) return null;
+  return raw.replace(/[.:\s]/g, '-');
 }
 
 function escapeMarkdown(text: string): string {

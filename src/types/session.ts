@@ -7,6 +7,8 @@
 
 export interface SessionEntry {
   type: string;
+  /** Actual session mode — absent means 'tmux' for backwards compatibility */
+  sessionType?: 'tmux' | 'pty';
   /** Unix timestamp in SECONDS */
   createdAt: number;
   /** Unix timestamp in SECONDS */

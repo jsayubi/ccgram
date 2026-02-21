@@ -28,7 +28,7 @@ require('dotenv').config({ path: path.join(PROJECT_ROOT, '.env'), quiet: true })
 import https from 'https';
 import http from 'http';
 import fs from 'fs';
-import { exec } from 'child_process';
+import { exec, execSync } from 'child_process';
 import {
   resolveWorkspace,
   listActiveSessions,
@@ -52,6 +52,7 @@ import {
   PROMPTS_DIR,
 } from './prompt-bridge';
 import { parseCallbackData } from './src/utils/callback-parser';
+import { ptySessionManager } from './src/utils/pty-session-manager';
 import Logger from './src/core/logger';
 import type {
   TelegramMessage,
@@ -64,6 +65,12 @@ import type {
 } from './src/types';
 
 const logger = new Logger('bot');
+
+const INJECTION_MODE: string = process.env.INJECTION_MODE || 'tmux';
+
+const TMUX_AVAILABLE: boolean = (() => {
+  try { execSync('tmux -V', { stdio: 'ignore' }); return true; } catch { return false; }
+})();
 
 const BOT_TOKEN: string | undefined = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT_ID: string | undefined = process.env.TELEGRAM_CHAT_ID;
@@ -228,8 +235,8 @@ async function handleSessions(): Promise<void> {
   }
 
   const lines: string[] = sessions.map((s) => {
-    const statusIcon: string = s.session.description?.startsWith('waiting') ? '\u23f3' : '\u2705';
-    return `${statusIcon} *${escapeMarkdown(s.workspace)}* (${s.age})`;
+    const icon: string = sessionIcon(s);
+    return `${icon} *${escapeMarkdown(s.workspace)}* (${s.age})`;
   });
 
   let footer = '';
@@ -273,18 +280,18 @@ async function handleStatus(workspaceArg: string | null): Promise<void> {
   const tmuxName: string = match.session.tmuxSession;
 
   try {
-    const output: string = await capturePane(tmuxName);
+    const output: string = await sessionCaptureOutput(tmuxName);
     // Trim and take last 20 lines to avoid message length limits
     const trimmed: string = output.trim().split('\n').slice(-20).join('\n');
-    const htmlMsg: string = `<b>${escapeHtml(resolvedName)}</b> tmux output:\n<pre>${escapeHtml(trimmed)}</pre>`;
+    const htmlMsg: string = `<b>${escapeHtml(resolvedName)}</b> session output:\n<pre>${escapeHtml(trimmed)}</pre>`;
     try {
       await sendHtmlMessage(htmlMsg);
     } catch {
       // Fallback to plain text if HTML fails
-      await telegramAPI('sendMessage', { chat_id: CHAT_ID, text: `${resolvedName} tmux output:\n${trimmed}` });
+      await telegramAPI('sendMessage', { chat_id: CHAT_ID, text: `${resolvedName} session output:\n${trimmed}` });
     }
   } catch (err: unknown) {
-    await sendMessage(`Could not read tmux session \`${tmuxName}\`: ${(err as Error).message}`);
+    await sendMessage(`Could not read session \`${tmuxName}\`: ${(err as Error).message}`);
   }
 }
 
@@ -318,15 +325,13 @@ async function handleStop(workspaceArg: string | null): Promise<void> {
   const resolvedName: string = resolved.workspace;
   const tmuxName: string = resolved.match.session.tmuxSession;
 
-  try {
-    await tmuxExec(`tmux has-session -t ${tmuxName} 2>/dev/null`);
-  } catch {
-    await sendMessage(`Tmux session \`${tmuxName}\` not found. Is Claude running in *${escapeMarkdown(resolvedName)}*?`);
+  if (!await sessionExists(tmuxName)) {
+    await sendMessage(`Session \`${tmuxName}\` not found.`);
     return;
   }
 
   try {
-    await tmuxExec(`tmux send-keys -t ${tmuxName} C-c`);
+    await sessionInterrupt(tmuxName);
     await sendMessage(`\u26d4 Sent interrupt to *${escapeMarkdown(resolvedName)}*`);
   } catch (err: unknown) {
     await sendMessage(`\u274c Failed to interrupt: ${(err as Error).message}`);
@@ -448,7 +453,7 @@ async function handleCompact(workspaceArg: string | null): Promise<void> {
   for (let i = 0; i < 5; i++) {
     await sleep(2000);
     try {
-      const output: string = await capturePane(tmuxName);
+      const output: string = await sessionCaptureOutput(tmuxName);
       if (output.includes('Compacting')) {
         started = true;
         break;
@@ -461,7 +466,7 @@ async function handleCompact(workspaceArg: string | null): Promise<void> {
   if (!started) {
     // Command may have finished very quickly or failed to start
     try {
-      const output: string = await capturePane(tmuxName);
+      const output: string = await sessionCaptureOutput(tmuxName);
       if (output.includes('Compacted')) {
         const lines: string = output.trim().split('\n').slice(-10).join('\n');
         await sendMessage(`\u2705 *${escapeMarkdown(resolved.workspace)}* compact done:\n\`\`\`\n${lines}\n\`\`\``);
@@ -476,7 +481,7 @@ async function handleCompact(workspaceArg: string | null): Promise<void> {
   for (let i = 0; i < 30; i++) {
     await sleep(2000);
     try {
-      const output: string = await capturePane(tmuxName);
+      const output: string = await sessionCaptureOutput(tmuxName);
       if (!output.includes('Compacting')) {
         const lines: string = output.trim().split('\n').slice(-10).join('\n');
         await sendMessage(`\u2705 *${escapeMarkdown(resolved.workspace)}* compact done:\n\`\`\`\n${lines}\n\`\`\``);
@@ -487,9 +492,9 @@ async function handleCompact(workspaceArg: string | null): Promise<void> {
     }
   }
 
-  // Timeout — show current pane state
+  // Timeout — show current session state
   try {
-    const output: string = await capturePane(tmuxName);
+    const output: string = await sessionCaptureOutput(tmuxName);
     const trimmed: string = output.trim().split('\n').slice(-5).join('\n');
     await sendMessage(`\u23f3 *${escapeMarkdown(resolved.workspace)}* compact may still be running:\n\`\`\`\n${trimmed}\n\`\`\``);
   } catch {
@@ -593,63 +598,95 @@ async function startProject(name: string): Promise<void> {
   // 3. Sanitize tmux session name (dots, colons, spaces are invalid in tmux)
   const tmuxName: string = name.replace(/[.:\s]/g, '-');
 
-  // 4. Check if tmux session already exists
-  try {
-    await tmuxExec(`tmux has-session -t "${tmuxName}" 2>/dev/null`);
-    // Already running — just register, set default, tell user
+  // 4. Check existing session (PTY or tmux)
+  const alreadyRunning = await sessionExists(tmuxName);
+  if (alreadyRunning) {
     upsertSession({ cwd: projectDir, tmuxSession: tmuxName, status: 'waiting', sessionId: null });
     recordProjectUsage(name, projectDir);
     setDefaultWorkspace(name);
     await sendMessage(`Session \`${tmuxName}\` already running.\nSet as default — send messages directly.`);
     return;
-  } catch {} // Doesn't exist — create it
-
-  // 5. Create tmux session and start claude
-  try {
-    await tmuxExec(`tmux new-session -d -s "${tmuxName}" -c "${projectDir}"`);
-    await sleep(300);
-    await tmuxExec(`tmux send-keys -t "${tmuxName}" 'claude' C-m`);
-  } catch (err: unknown) {
-    await sendMessage(`Failed to start session: ${(err as Error).message}`);
-    return;
   }
 
-  // 6. Pre-register session + record history + set as default
-  upsertSession({ cwd: projectDir, tmuxSession: tmuxName, status: 'starting', sessionId: null });
-  recordProjectUsage(name, projectDir);
-  setDefaultWorkspace(name);
+  // 5. Create session — PTY or tmux
+  const usePty = !TMUX_AVAILABLE || INJECTION_MODE === 'pty';
 
-  // 7. Track confirmation message for reply-to routing
-  const msg = await sendMessage(
-    `Started Claude in *${escapeMarkdown(name)}*\n\n` +
-    `*Path:* \`${projectDir}\`\n` +
-    `*Session:* \`${tmuxName}\`\n\n` +
-    `Default workspace set — send messages directly.`
-  ) as TelegramMessage | undefined;
-  if (msg && msg.message_id) {
-    trackNotificationMessage(msg.message_id, name, 'new-session');
+  if (!usePty) {
+    // tmux path (existing behaviour)
+    try {
+      await tmuxExec(`tmux new-session -d -s "${tmuxName}" -c "${projectDir}"`);
+      await sleep(300);
+      await tmuxExec(`tmux send-keys -t "${tmuxName}" 'claude' C-m`);
+    } catch (err: unknown) {
+      await sendMessage(`Failed to start session: ${(err as Error).message}`);
+      return;
+    }
+
+    upsertSession({ cwd: projectDir, tmuxSession: tmuxName, status: 'starting', sessionId: null, sessionType: 'tmux' });
+    recordProjectUsage(name, projectDir);
+    setDefaultWorkspace(name);
+
+    const msg = await sendMessage(
+      `Started Claude in *${escapeMarkdown(name)}*\n\n` +
+      `*Path:* \`${projectDir}\`\n` +
+      `*Session:* \`${tmuxName}\`\n\n` +
+      `Default workspace set — send messages directly.`
+    ) as TelegramMessage | undefined;
+    if (msg && msg.message_id) {
+      trackNotificationMessage(msg.message_id, name, 'new-session');
+    }
+  } else if (ptySessionManager.isAvailable()) {
+    // PTY path — spawns 'claude' directly (no separate send-keys step)
+    const ok = ptySessionManager.spawn(tmuxName, projectDir);
+    if (!ok) { await sendMessage('Failed to spawn PTY session.'); return; }
+
+    upsertSession({ cwd: projectDir, tmuxSession: tmuxName, status: 'starting', sessionId: null, sessionType: 'pty' });
+    recordProjectUsage(name, projectDir);
+    setDefaultWorkspace(name);
+
+    const msg = await sendMessage(
+      `Started Claude in *${escapeMarkdown(name)}*\n\n` +
+      `*Path:* \`${projectDir}\`\n` +
+      `*Session:* \`${tmuxName}\`\n\n` +
+      `Default workspace set — send messages directly.\n\n` +
+      `_Headless PTY mode — full Telegram control. Not attachable from terminal._`
+    ) as TelegramMessage | undefined;
+    if (msg && msg.message_id) {
+      trackNotificationMessage(msg.message_id, name, 'new-session');
+    }
+  } else {
+    await sendMessage(
+      '\u26a0\ufe0f tmux not found and node-pty not installed.\n' +
+      'Install tmux or run: `npm install node-pty` in ~/.ccgram/'
+    );
   }
 }
 
 async function injectAndRespond(session: SessionEntry, command: string, workspace: string): Promise<boolean> {
   const tmuxName: string = session.tmuxSession;
 
-  // Check tmux session exists
-  try {
-    await tmuxExec(`tmux has-session -t ${tmuxName} 2>/dev/null`);
-  } catch {
-    await sendMessage(`Tmux session \`${tmuxName}\` not found. Is Claude running in *${escapeMarkdown(workspace)}*?`);
+  if (!await sessionExists(tmuxName)) {
+    await sendMessage(`\u26a0\ufe0f Session not found. Start Claude via /new for full remote control, or use tmux.`);
     return false;
   }
 
-  // Inject command directly via 3-step tmux send-keys (no confirmation polling)
-  const escapedCommand: string = command.replace(/'/g, "'\"'\"'");
   try {
-    await tmuxExec(`tmux send-keys -t ${tmuxName} C-u`);
-    await sleep(150);
-    await tmuxExec(`tmux send-keys -t ${tmuxName} '${escapedCommand}'`);
-    await sleep(150);
-    await tmuxExec(`tmux send-keys -t ${tmuxName} C-m`);
+    if (isPtySession(tmuxName)) {
+      // PTY: write raw bytes directly — no shell quoting needed
+      ptySessionManager.write(tmuxName, '\x15');   // Ctrl+U: clear line
+      await sleep(150);
+      ptySessionManager.write(tmuxName, command);  // raw command text
+      await sleep(150);
+      ptySessionManager.write(tmuxName, '\r');     // Enter
+    } else {
+      // tmux: existing shell-escaped path
+      const escapedCommand: string = command.replace(/'/g, "'\"'\"'");
+      await tmuxExec(`tmux send-keys -t ${tmuxName} C-u`);
+      await sleep(150);
+      await tmuxExec(`tmux send-keys -t ${tmuxName} '${escapedCommand}'`);
+      await sleep(150);
+      await tmuxExec(`tmux send-keys -t ${tmuxName} C-m`);
+    }
     startTypingIndicator();
     return true;
   } catch (err: unknown) {
@@ -665,6 +702,57 @@ function tmuxExec(cmd: string): Promise<boolean> {
       else resolve(true);
     });
   });
+}
+
+// ── PTY / tmux dispatch helpers ──────────────────────────────────
+
+/** Is this session managed as a live PTY handle by this bot process? */
+function isPtySession(sessionName: string): boolean {
+  return ptySessionManager.has(sessionName);
+}
+
+/** Check session exists (PTY handle OR tmux session). */
+async function sessionExists(name: string): Promise<boolean> {
+  if (ptySessionManager.has(name)) return true;
+  if (TMUX_AVAILABLE) {
+    try { await tmuxExec(`tmux has-session -t ${name} 2>/dev/null`); return true; }
+    catch { return false; }
+  }
+  return false;
+}
+
+/**
+ * Send a named key (Down, Up, Enter, C-m, C-c, C-u, Space) to a session.
+ * For PTY: translates to escape sequence via ptySessionManager.sendKey.
+ * For tmux: passes key name directly to tmux send-keys.
+ */
+async function sessionSendKey(name: string, key: string): Promise<void> {
+  if (isPtySession(name)) {
+    ptySessionManager.sendKey(name, key);
+  } else {
+    await tmuxExec(`tmux send-keys -t ${name} ${key}`);
+  }
+  await sleep(100);
+}
+
+/** Capture session output (last 20 lines). */
+async function sessionCaptureOutput(name: string): Promise<string> {
+  if (isPtySession(name)) return ptySessionManager.capture(name, 20) ?? '';
+  return capturePane(name);
+}
+
+/** Send Ctrl+C interrupt to a session. */
+async function sessionInterrupt(name: string): Promise<void> {
+  if (isPtySession(name)) ptySessionManager.interrupt(name);
+  else await tmuxExec(`tmux send-keys -t ${name} C-c`);
+}
+
+/** Icon for /sessions listing based on session type and live status. */
+function sessionIcon(s: { workspace: string; token: string; session: SessionEntry; age: string }): string {
+  if (s.session.sessionType === 'pty') {
+    return ptySessionManager.has(s.session.tmuxSession) ? '\u{1F916}' : '\u{1F4A4}'; // 🤖 or 💤
+  }
+  return s.session.description?.startsWith('waiting') ? '\u23f3' : '\u2705'; // ⏳ or ✅
 }
 
 // ── Callback query handler ───────────────────────────────────────
@@ -776,26 +864,26 @@ async function processCallbackQuery(query: TelegramCallbackQuery): Promise<void>
       return;
     }
 
-    // Single-select: inject arrow keys + Enter into tmux
+    // Single-select: inject arrow keys + Enter into session
     // Claude Code's AskUserQuestion UI: first option pre-highlighted, Down (N-1) times + Enter
     const downPresses: number = optIdx;
+    const tmuxSessOpt: string = pending.tmuxSession as string;
     try {
       for (let i = 0; i < downPresses; i++) {
-        await tmuxExec(`tmux send-keys -t ${pending.tmuxSession} Down`);
-        await sleep(100);
+        await sessionSendKey(tmuxSessOpt, 'Down');
       }
-      await tmuxExec(`tmux send-keys -t ${pending.tmuxSession} Enter`);
+      await sessionSendKey(tmuxSessOpt, 'Enter');
 
       // For multi-question flows: after the last question, send an extra
       // Enter to confirm the preview/submit step
       if (pending.isLast) {
         await sleep(500);
-        await tmuxExec(`tmux send-keys -t ${pending.tmuxSession} Enter`);
+        await sessionSendKey(tmuxSessOpt, 'Enter');
       }
 
       await answerCallbackQuery(query.id, `Selected: ${optionLabel}`);
     } catch (err: unknown) {
-      logger.error(`Failed to inject tmux keystroke: ${(err as Error).message}`);
+      logger.error(`Failed to inject keystroke: ${(err as Error).message}`);
       await answerCallbackQuery(query.id, 'Failed to send selection');
       return;
     }
@@ -830,30 +918,28 @@ async function processCallbackQuery(query: TelegramCallbackQuery): Promise<void>
     // Claude Code multi-select UI starts with cursor on first option
     // After the listed options, Claude Code adds an auto-generated "Other" option,
     // then Submit. So we need: options.length Downs + 1 more Down to skip "Other"
+    const tmuxSessSubmit: string = pending.tmuxSession as string;
     try {
       for (let i = 0; i < (pending.options as string[]).length; i++) {
         if (selected[i]) {
-          await tmuxExec(`tmux send-keys -t ${pending.tmuxSession} Space`);
-          await sleep(100);
+          await sessionSendKey(tmuxSessSubmit, 'Space');
         }
-        await tmuxExec(`tmux send-keys -t ${pending.tmuxSession} Down`);
-        await sleep(100);
+        await sessionSendKey(tmuxSessSubmit, 'Down');
       }
       // Skip past the auto-added "Other" option to reach Submit
-      await tmuxExec(`tmux send-keys -t ${pending.tmuxSession} Down`);
-      await sleep(100);
+      await sessionSendKey(tmuxSessSubmit, 'Down');
       // Cursor is now on Submit — press Enter
-      await tmuxExec(`tmux send-keys -t ${pending.tmuxSession} Enter`);
+      await sessionSendKey(tmuxSessSubmit, 'Enter');
 
       // For multi-question flows: extra Enter to confirm
       if (pending.isLast) {
         await sleep(500);
-        await tmuxExec(`tmux send-keys -t ${pending.tmuxSession} Enter`);
+        await sessionSendKey(tmuxSessSubmit, 'Enter');
       }
 
       await answerCallbackQuery(query.id, `Submitted ${selectedLabels.length} options`);
     } catch (err: unknown) {
-      logger.error(`Failed to inject tmux keystrokes: ${(err as Error).message}`);
+      logger.error(`Failed to inject keystrokes: ${(err as Error).message}`);
       await answerCallbackQuery(query.id, 'Failed to send selections');
       return;
     }
@@ -900,10 +986,9 @@ async function processCallbackQuery(query: TelegramCallbackQuery): Promise<void>
       setTimeout(async () => {
         try {
           for (let i = 0; i < downPresses; i++) {
-            await tmuxExec(`tmux send-keys -t ${tmux} Down`);
-            await sleep(100);
+            await sessionSendKey(tmux, 'Down');
           }
-          await tmuxExec(`tmux send-keys -t ${tmux} Enter`);
+          await sessionSendKey(tmux, 'Enter');
           logger.info(`Injected question answer into ${tmux}: option ${parsed.optionIndex}`);
         } catch (err: unknown) {
           logger.error(`Failed to inject question answer: ${(err as Error).message}`);

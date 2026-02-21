@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 
 /**
- * Enhanced Hook Notifier — called by Claude Code hooks (Stop / Notification).
+ * Enhanced Hook Notifier — called by Claude Code hooks.
  *
- * Reads the hook JSON payload from stdin, extracts the workspace name,
- * updates the session map, and sends a Telegram notification.
+ * Handles: Stop (completed), Notification (waiting), SessionStart,
+ *          SessionEnd, SubagentStop (subagent-done).
  *
  * Usage (in ~/.claude/settings.json hooks):
- *   node /path/to/ccgram/enhanced-hook-notify.js completed
- *   node /path/to/ccgram/enhanced-hook-notify.js waiting
+ *   node /path/to/ccgram/dist/enhanced-hook-notify.js completed
+ *   node /path/to/ccgram/dist/enhanced-hook-notify.js waiting
+ *   node /path/to/ccgram/dist/enhanced-hook-notify.js session-start
+ *   node /path/to/ccgram/dist/enhanced-hook-notify.js session-end
+ *   node /path/to/ccgram/dist/enhanced-hook-notify.js subagent-done
  */
 
 import fs from 'fs';
@@ -20,6 +23,7 @@ import https from 'https';
 import Logger from './src/core/logger';
 import { upsertSession, extractWorkspaceName, trackNotificationMessage } from './workspace-router';
 import { hasPendingForWorkspace } from './prompt-bridge';
+import { isUserActiveAtTerminal } from './src/utils/active-check';
 import type { TelegramMessage } from './src/types';
 
 const logger = new Logger('hook:enhanced');
@@ -28,7 +32,26 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const TELEGRAM_ENABLED = process.env.TELEGRAM_ENABLED === 'true';
 
-const STATUS_ARG = process.argv[2] || 'completed'; // "completed" | "waiting"
+const STATUS_ARG = process.argv[2] || 'completed';
+
+// ── Status configuration ─────────────────────────────────────────
+
+interface StatusConfig {
+  icon: string;
+  label: string;
+  /** When true, notification fires even if user is active at terminal */
+  alwaysNotify: boolean;
+  /** When true, register/update the session map entry */
+  upsertSession: boolean;
+}
+
+const STATUS_CONFIG: Record<string, StatusConfig> = {
+  'completed':     { icon: '\u2705', label: 'Task completed',    alwaysNotify: false, upsertSession: true  },
+  'waiting':       { icon: '\u23f3', label: 'Waiting for input', alwaysNotify: false, upsertSession: true  },
+  'session-start': { icon: '\u{1F7E2}', label: 'Session started',   alwaysNotify: false, upsertSession: true  },
+  'session-end':   { icon: '\u{1F534}', label: 'Session ended',     alwaysNotify: false, upsertSession: false },
+  'subagent-done': { icon: '\u{1F916}', label: 'Subagent finished', alwaysNotify: false, upsertSession: true  },
+};
 
 // ── Main ────────────────────────────────────────────────────────
 
@@ -38,25 +61,39 @@ async function main(): Promise<void> {
     const raw = await readStdin();
     payload = JSON.parse(raw);
   } catch {
-    // If no stdin or invalid JSON, build a minimal payload from env
     payload = {};
   }
 
   const cwd = (payload.cwd as string) || process.env.CLAUDE_CWD || process.cwd();
   const workspace = extractWorkspaceName(cwd)!;
-  const tmuxSession = detectTmuxSession();
+  const tmuxSession = detectSessionName(cwd);
   const sessionId = (payload.session_id as string) || null;
 
-  // Update session map
-  try {
-    upsertSession({
-      cwd,
-      tmuxSession: tmuxSession || `claude-${workspace}`,
-      status: STATUS_ARG,
-      sessionId,
-    });
-  } catch (err: unknown) {
-    logger.error(`Failed to update session map: ${(err as Error).message}`);
+  const config = STATUS_CONFIG[STATUS_ARG] ?? STATUS_CONFIG['waiting'];
+
+  // Update session map (skip for session-end — session is over)
+  if (config.upsertSession) {
+    try {
+      upsertSession({
+        cwd,
+        tmuxSession: tmuxSession || `claude-${workspace}`,
+        status: STATUS_ARG,
+        sessionId,
+      });
+    } catch (err: unknown) {
+      logger.error(`Failed to update session map: ${(err as Error).message}`);
+    }
+  }
+
+  // If the bot injected this command from Telegram, typing-active exists — always notify
+  // so the response goes back to Telegram regardless of terminal activity.
+  const typingActivePath = path.join(PROJECT_ROOT, 'src/data', 'typing-active');
+  const isTelegramInjected = fs.existsSync(typingActivePath);
+
+  // Suppress notification if user is actively at terminal AND this wasn't Telegram-injected
+  if (!config.alwaysNotify && !isTelegramInjected && isUserActiveAtTerminal()) {
+    try { fs.unlinkSync(typingActivePath); } catch {}
+    return;
   }
 
   // Send Telegram notification
@@ -64,34 +101,25 @@ async function main(): Promise<void> {
     // Dedup: if a richer prompt (permission/question) is already pending for this
     // workspace, skip the basic "Waiting for input" notification
     if (STATUS_ARG === 'waiting' && hasPendingForWorkspace(workspace)) {
-      try { fs.unlinkSync(path.join(PROJECT_ROOT, 'src/data', 'typing-active')); } catch {}
+      try { fs.unlinkSync(typingActivePath); } catch {}
       return;
     }
 
-    const icon = STATUS_ARG === 'completed' ? '\u2705' : '\u23f3';
-    const label = STATUS_ARG === 'completed' ? 'Task completed' : 'Waiting for input';
-    let message = `${icon} ${label} in <b>${escapeHtml(workspace)}</b>`;
+    let message = `${config.icon} ${config.label} in <b>${escapeHtml(workspace)}</b>`;
 
-    // Extract response text from transcript file
-    // Brief delay to let Claude Code flush the current response to the transcript
-    if (payload.transcript_path) {
-      await new Promise<void>(r => setTimeout(r, 1500));
-      try {
-        const responseText = extractLastResponse(payload.transcript_path as string);
-        if (responseText) {
-          const truncated = responseText.length > 3500
-            ? responseText.slice(0, 3497) + '...'
-            : responseText;
-          message += `\n\n${markdownToHtml(truncated)}`;
-        }
-      } catch {}
+    // Append Claude's last response text (skip for session-start — nothing said yet)
+    if (STATUS_ARG !== 'session-start') {
+      const responseText = getResponseText(payload);
+      if (responseText) {
+        const truncated = responseText.length > 3500
+          ? responseText.slice(0, 3497) + '...'
+          : responseText;
+        message += `\n\n${markdownToHtml(truncated)}`;
+      }
     }
 
-    // Remove typing signal file BEFORE sending, so the bot's interval tick
-    // doesn't re-assert typing during the async Telegram send
-    try {
-      fs.unlinkSync(path.join(PROJECT_ROOT, 'src/data', 'typing-active'));
-    } catch {}
+    // Remove typing signal file BEFORE sending
+    try { fs.unlinkSync(typingActivePath); } catch {}
 
     try {
       const result = await sendTelegram(message, 'HTML');
@@ -111,6 +139,30 @@ async function main(): Promise<void> {
       }
     }
   }
+}
+
+// ── Response text extraction ─────────────────────────────────────
+
+/**
+ * Get Claude's last response text from the hook payload.
+ * Prefers last_assistant_message (v2.1.47+), falls back to transcript parsing.
+ * For SubagentStop, also tries agent_transcript_path.
+ */
+function getResponseText(payload: Record<string, unknown>): string | null {
+  // Direct field — available in Claude Code v2.1.47+
+  const direct = payload.last_assistant_message as string | undefined;
+  if (direct) return direct;
+
+  // Transcript fallback for older Claude Code versions
+  const agentTranscript = payload.agent_transcript_path as string | undefined;
+  if (agentTranscript) {
+    try { return extractLastResponse(agentTranscript); } catch {}
+  }
+  const transcript = payload.transcript_path as string | undefined;
+  if (transcript) {
+    try { return extractLastResponse(transcript); } catch {}
+  }
+  return null;
 }
 
 // ── Telegram ────────────────────────────────────────────────────
@@ -189,7 +241,6 @@ function readStdin(): Promise<string> {
       if (!resolved) { resolved = true; resolve(data); }
     });
 
-    // If no data arrives within 500ms, resolve and destroy stdin
     setTimeout(() => {
       if (!resolved) {
         resolved = true;
@@ -200,17 +251,18 @@ function readStdin(): Promise<string> {
   });
 }
 
-function detectTmuxSession(): string | null {
-  // If running inside tmux, grab the session name
+function detectSessionName(cwd: string): string | null {
+  // 1. Try tmux (preferred — gives actual session name)
   if (process.env.TMUX) {
     try {
       const { execSync } = require('child_process');
       return execSync('tmux display-message -p "#S"', { encoding: 'utf8' }).trim();
-    } catch {
-      return null;
-    }
+    } catch {}
   }
-  return null;
+  // 2. Derive from CWD — sanitize so it matches PTY handle key format
+  const raw = extractWorkspaceName(cwd);
+  if (!raw) return null;
+  return raw.replace(/[.:\s]/g, '-');
 }
 
 function escapeHtml(text: string): string {

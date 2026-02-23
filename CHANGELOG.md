@@ -2,6 +2,18 @@
 
 All notable changes to CCGram are documented here.
 
+## [1.0.1] - 2026-02-23
+
+### Security
+- Removed `node-imap` from `optionalDependencies` — eliminates a high-severity ReDoS vulnerability chain (`node-imap` → `utf7` → `semver`). Users who need IMAP email relay can still install it manually: `npm install node-imap` inside `~/.ccgram/`
+
+### Fixes
+- Renamed package to `@jsayubi/ccgram` (npm blocked `ccgram` due to similarity with existing package `cc-gram`)
+- Fixed `vitest.config.js` → `vitest.config.mjs` for ESM compatibility on Node 18
+- Fixed invalid JSON in `config/email-template.json` (trailing comments after closing brace)
+
+---
+
 ## [1.0.0] - 2026-02-23
 
 Initial public release.

@@ -1,6 +1,6 @@
 {
   "name": "ccgram",
-  "version": "0.1.0-alpha",
+  "version": "1.0.0",
   "description": "Control Claude Code from Telegram",
   "main": "dist/workspace-telegram-bot.js",
   "bin": {

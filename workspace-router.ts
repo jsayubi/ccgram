@@ -8,6 +8,7 @@
  * routed without memorising tokens.
  */
 
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { PROJECT_ROOT } from './src/utils/paths';
@@ -192,12 +193,7 @@ function pruneExpired(): number {
 // ── Helpers ──────────────────────────────────────────────────────
 
 function generateToken(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let token = '';
-  for (let i = 0; i < 8; i++) {
-    token += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return token;
+  return crypto.randomBytes(4).toString('hex').toUpperCase();
 }
 
 function formatAge(seconds: number): string {

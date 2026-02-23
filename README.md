@@ -39,7 +39,7 @@ Claude Code  →  ccgram hooks  →  Telegram bot  →  📱 your phone
 - [Node.js](https://nodejs.org) 18+
 - A Telegram bot token (from [@BotFather](https://t.me/BotFather))
 - Your Telegram chat ID (from [@userinfobot](https://t.me/userinfobot))
-- [tmux](https://github.com/tmux/tmux/wiki) _(optional — falls back to PTY if not installed)_
+- [tmux](https://github.com/tmux/tmux/wiki) _(optional — falls back to headless PTY via `node-pty` when absent)_
 
 ## Quick Start
 
@@ -304,7 +304,18 @@ All notifications — including permission requests — are suppressed automatic
 Yes. Each Claude session maps to a named tmux or PTY session. Use `/sessions` to see all active sessions, or `/use <workspace>` to set a default for plain text routing.
 
 **Do I need tmux?**
-No. If tmux is not installed, CCGram falls back to headless PTY sessions via `node-pty`. Install it with `npm install node-pty` in `~/.ccgram/`. Full remote control works in both modes.
+No. When tmux is not detected, CCGram automatically falls back to headless PTY sessions powered by [`node-pty`](https://github.com/microsoft/node-pty). No configuration required — it activates on its own.
+
+To use PTY mode:
+1. Install the optional dependency: `npm install node-pty` inside `~/.ccgram/`
+2. PTY activates automatically when `tmux` is not running, or force it explicitly:
+   ```bash
+   # in ~/.ccgram/.env
+   INJECTION_MODE=pty
+   ```
+3. Restart the bot: `launchctl kickstart -k gui/$(id -u)/com.ccgram` (macOS) or `sudo systemctl restart ccgram` (Linux)
+
+Full remote control — permission approvals, question answering, `/new`, `/stop` — works identically in both modes.
 
 **Is my bot token stored securely?**
 The token is stored in `~/.ccgram/.env`, readable only by your user. It's never logged or transmitted beyond Telegram's API.

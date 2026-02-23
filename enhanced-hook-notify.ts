@@ -271,18 +271,28 @@ function escapeHtml(text: string): string {
 
 function markdownToHtml(text: string): string {
   let html = escapeHtml(text);
-  // Code blocks: ```...``` → <pre>...</pre>
-  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_: string, __: string, code: string) => `<pre>${code.trim()}</pre>`);
-  // Inline code: `...` → <code>...</code>
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-  // Bold: **...** → <b>...</b>
+  const placeholders: string[] = [];
+
+  // Extract code blocks/inline code first to protect them from bold/italic regexes
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_: string, __: string, code: string) => {
+    const idx = placeholders.length;
+    placeholders.push(`<pre>${code.trim()}</pre>`);
+    return `\x00P${idx}\x00`;
+  });
+  html = html.replace(/`([^`]+)`/g, (_: string, code: string) => {
+    const idx = placeholders.length;
+    placeholders.push(`<code>${code}</code>`);
+    return `\x00P${idx}\x00`;
+  });
+
+  // Apply inline formatting only to non-code text
   html = html.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
-  // Italic: *...* → <i>...</i>
   html = html.replace(/\*(.+?)\*/g, '<i>$1</i>');
-  // Bullets: - item → • item
   html = html.replace(/^[-*]\s+/gm, '\u2022 ');
-  // Strip headers: ## text → text
   html = html.replace(/^#{1,6}\s+/gm, '');
+
+  // Restore code placeholders
+  html = html.replace(/\x00P(\d+)\x00/g, (_: string, idx: string) => placeholders[parseInt(idx)]);
   return html;
 }
 

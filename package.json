@@ -1,6 +1,6 @@
 {
   "name": "@jsayubi/ccgram",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Control Claude Code from Telegram",
   "main": "dist/workspace-telegram-bot.js",
   "bin": {

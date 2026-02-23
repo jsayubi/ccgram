@@ -2,6 +2,13 @@
 
 All notable changes to CCGram are documented here.
 
+## [1.0.2] - 2026-02-23
+
+### Security
+- Removed legacy AppleScript GUI automation files (`claude-automation`, `simple-automation`, `command-relay`, `taskping-daemon`) — dead code never used in production that triggered a socket.dev "Obfuscated code" alert due to embedded osascript keystroke injection
+
+---
+
 ## [1.0.1] - 2026-02-23
 
 ### Security

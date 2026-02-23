@@ -18,6 +18,7 @@ import path from 'path';
 import { PROJECT_ROOT } from './src/utils/paths';
 require('dotenv').config({ path: path.join(PROJECT_ROOT, '.env'), quiet: true });
 
+import fs from 'fs';
 import https from 'https';
 import { extractWorkspaceName, trackNotificationMessage } from './workspace-router';
 import { generatePromptId, writePending } from './prompt-bridge';
@@ -40,9 +41,11 @@ async function main(): Promise<void> {
 
   const raw = await readStdin();
 
-  // Skip Telegram notification if user is actively working at the terminal.
-  // They'll answer the question directly in the terminal UI.
-  if (isUserActiveAtTerminal()) {
+  // Skip Telegram notification if user is at terminal AND this wasn't Telegram-injected.
+  // If the command came from Telegram, the question must go back to Telegram.
+  const typingActivePath = path.join(PROJECT_ROOT, 'src/data', 'typing-active');
+  const isTelegramInjected = fs.existsSync(typingActivePath);
+  if (!isTelegramInjected && isUserActiveAtTerminal()) {
     return;
   }
 

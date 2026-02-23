@@ -180,6 +180,24 @@ function stopTypingIndicator(): void {
   try { fs.unlinkSync(TYPING_SIGNAL_PATH); } catch {}
 }
 
+async function registerBotCommands(): Promise<void> {
+  const commands = [
+    { command: 'new',      description: 'Start Claude in a project directory' },
+    { command: 'sessions', description: 'List all active Claude sessions' },
+    { command: 'use',      description: 'Set or show default workspace' },
+    { command: 'status',   description: 'Show current session output' },
+    { command: 'stop',     description: 'Interrupt the running prompt' },
+    { command: 'compact',  description: 'Compact context in the current session' },
+    { command: 'help',     description: 'Show available commands' },
+  ];
+  try {
+    await telegramAPI('setMyCommands', { commands });
+    logger.info('Bot commands registered with Telegram');
+  } catch (err: unknown) {
+    logger.warn(`Failed to register bot commands: ${(err as Error).message}`);
+  }
+}
+
 function answerCallbackQuery(callbackQueryId: string, text?: string): Promise<unknown> {
   return telegramAPI('answerCallbackQuery', {
     callback_query_id: callbackQueryId,
@@ -1251,6 +1269,9 @@ async function start(): Promise<void> {
   } catch (err: unknown) {
     logger.warn(`Could not delete webhook: ${(err as Error).message}`);
   }
+
+  // Register bot commands with Telegram (populates the "/" menu in chat)
+  await registerBotCommands();
 
   // Start optional health check server
   const healthPort: number = parseInt(process.env.HEALTH_PORT as string, 10);

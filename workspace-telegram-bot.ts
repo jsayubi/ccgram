@@ -1009,6 +1009,7 @@ async function processCallbackQuery(query: TelegramCallbackQuery): Promise<void>
             await sessionSendKey(tmux, 'Down');
           }
           await sessionSendKey(tmux, 'Enter');
+          startTypingIndicator(); // ensure Stop hook routes response back to Telegram
           logger.info(`Injected question answer into ${tmux}: option ${parsed.optionIndex}`);
         } catch (err: unknown) {
           logger.error(`Failed to inject question answer: ${(err as Error).message}`);

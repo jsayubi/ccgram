@@ -900,6 +900,7 @@ async function processCallbackQuery(query: TelegramCallbackQuery): Promise<void>
       }
 
       await answerCallbackQuery(query.id, `Selected: ${optionLabel}`);
+      startTypingIndicator(); // ensure Stop hook routes response back to Telegram
     } catch (err: unknown) {
       logger.error(`Failed to inject keystroke: ${(err as Error).message}`);
       await answerCallbackQuery(query.id, 'Failed to send selection');
@@ -956,6 +957,7 @@ async function processCallbackQuery(query: TelegramCallbackQuery): Promise<void>
       }
 
       await answerCallbackQuery(query.id, `Submitted ${selectedLabels.length} options`);
+      startTypingIndicator(); // ensure Stop hook routes response back to Telegram
     } catch (err: unknown) {
       logger.error(`Failed to inject keystrokes: ${(err as Error).message}`);
       await answerCallbackQuery(query.id, 'Failed to send selections');

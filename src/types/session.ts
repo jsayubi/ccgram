@@ -62,9 +62,15 @@ export interface MessageWorkspaceMap {
   [messageId: string]: MessageWorkspaceEntry;
 }
 
+export interface SessionHistoryEntry {
+  id: string;        // Claude Code session UUID
+  startedAt: number; // Unix ms
+}
+
 export interface ProjectHistoryEntry {
   path: string;
   lastUsed: number; // ms
+  sessions?: SessionHistoryEntry[]; // newest first, max 5
 }
 
 export interface ProjectHistoryMap {

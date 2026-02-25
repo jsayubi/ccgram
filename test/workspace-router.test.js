@@ -254,3 +254,81 @@ describe('message-to-workspace tracking', () => {
     expect(router.getWorkspaceForMessage(undefined)).toBeNull();
   });
 });
+
+describe('recordProjectUsage with sessionId', () => {
+  it('stores session in sessions[] when sessionId provided', () => {
+    router.recordProjectUsage('myproject', testDir, 'session-uuid-1');
+    const history = JSON.parse(fs.readFileSync(path.join(testDir, 'project-history.json'), 'utf8'));
+    expect(history['myproject'].sessions).toHaveLength(1);
+    expect(history['myproject'].sessions[0].id).toBe('session-uuid-1');
+  });
+
+  it('preserves existing sessions when called without sessionId', () => {
+    router.recordProjectUsage('myproject', testDir, 'session-uuid-1');
+    router.recordProjectUsage('myproject', testDir);
+    const history = JSON.parse(fs.readFileSync(path.join(testDir, 'project-history.json'), 'utf8'));
+    expect(history['myproject'].sessions).toHaveLength(1);
+    expect(history['myproject'].sessions[0].id).toBe('session-uuid-1');
+  });
+
+  it('deduplicates: same sessionId not added twice', () => {
+    router.recordProjectUsage('myproject', testDir, 'session-uuid-1');
+    router.recordProjectUsage('myproject', testDir, 'session-uuid-1');
+    const history = JSON.parse(fs.readFileSync(path.join(testDir, 'project-history.json'), 'utf8'));
+    expect(history['myproject'].sessions).toHaveLength(1);
+  });
+
+  it('newest session is always at index 0', () => {
+    router.recordProjectUsage('myproject', testDir, 'uuid-old');
+    router.recordProjectUsage('myproject', testDir, 'uuid-new');
+    const history = JSON.parse(fs.readFileSync(path.join(testDir, 'project-history.json'), 'utf8'));
+    expect(history['myproject'].sessions[0].id).toBe('uuid-new');
+  });
+
+  it('caps at 5: oldest session dropped when 6th added', () => {
+    for (let i = 1; i <= 6; i++) {
+      router.recordProjectUsage('myproject', testDir, `uuid-${i}`);
+    }
+    const history = JSON.parse(fs.readFileSync(path.join(testDir, 'project-history.json'), 'utf8'));
+    expect(history['myproject'].sessions).toHaveLength(5);
+    expect(history['myproject'].sessions[0].id).toBe('uuid-6');
+    expect(history['myproject'].sessions.find(s => s.id === 'uuid-1')).toBeUndefined();
+  });
+});
+
+describe('getResumeableProjects', () => {
+  it('excludes projects with no sessions array', () => {
+    router.recordProjectUsage('no-sessions', testDir);
+    const result = router.getResumeableProjects();
+    expect(result.find(p => p.name === 'no-sessions')).toBeUndefined();
+  });
+
+  it('returns projects that have session IDs', () => {
+    router.recordProjectUsage('with-sessions', testDir, 'some-uuid');
+    const result = router.getResumeableProjects();
+    expect(result.find(p => p.name === 'with-sessions')).toBeDefined();
+  });
+
+  it('returns projects sorted by lastUsed descending', async () => {
+    router.recordProjectUsage('proj-a', testDir, 'uuid-a');
+    await new Promise(r => setTimeout(r, 5));
+    router.recordProjectUsage('proj-b', testDir, 'uuid-b');
+    const result = router.getResumeableProjects();
+    const names = result.map(p => p.name);
+    expect(names.indexOf('proj-b')).toBeLessThan(names.indexOf('proj-a'));
+  });
+
+  it('respects limit parameter', () => {
+    for (let i = 0; i < 5; i++) {
+      router.recordProjectUsage(`proj-${i}`, testDir, `uuid-${i}`);
+    }
+    const result = router.getResumeableProjects(3);
+    expect(result).toHaveLength(3);
+  });
+
+  it('excludes projects whose path does not exist on disk', () => {
+    router.recordProjectUsage('ghost-project', '/nonexistent/path/ghost', 'some-uuid');
+    const result = router.getResumeableProjects();
+    expect(result.find(p => p.name === 'ghost-project')).toBeUndefined();
+  });
+});

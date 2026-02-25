@@ -67,4 +67,42 @@ describe('parseCallbackData', () => {
   it('returns null for opt-submit with no promptId', () => {
     expect(parseCallbackData('opt-submit:')).toBeNull();
   });
+
+  describe('resume callbacks', () => {
+    it('parses rp:projectName', () => {
+      expect(parseCallbackData('rp:assistant')).toEqual({ type: 'rp', projectName: 'assistant' });
+    });
+
+    it('parses rp: with colons in project name', () => {
+      expect(parseCallbackData('rp:my:project:name')).toEqual({ type: 'rp', projectName: 'my:project:name' });
+    });
+
+    it('parses rs:projectName:sessionIdx', () => {
+      expect(parseCallbackData('rs:assistant:0')).toEqual({ type: 'rs', projectName: 'assistant', sessionIdx: 0 });
+    });
+
+    it('parses rs: with hyphenated project name', () => {
+      expect(parseCallbackData('rs:my-project:4')).toEqual({ type: 'rs', projectName: 'my-project', sessionIdx: 4 });
+    });
+
+    it('returns null for rp: with no project name', () => {
+      expect(parseCallbackData('rp:')).toBeNull();
+    });
+
+    it('returns null for rs: with non-numeric sessionIdx', () => {
+      expect(parseCallbackData('rs:assistant:notanumber')).toBeNull();
+    });
+
+    it('parses rc:projectName:sessionIdx (resume confirm)', () => {
+      expect(parseCallbackData('rc:ccgram:2')).toEqual({ type: 'rc', projectName: 'ccgram', sessionIdx: 2 });
+    });
+
+    it('parses rc: with hyphenated project name', () => {
+      expect(parseCallbackData('rc:my-project:0')).toEqual({ type: 'rc', projectName: 'my-project', sessionIdx: 0 });
+    });
+
+    it('returns null for rc: with non-numeric sessionIdx', () => {
+      expect(parseCallbackData('rc:assistant:abc')).toBeNull();
+    });
+  });
 });

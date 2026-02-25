@@ -32,6 +32,25 @@ export function parseCallbackData(data: string | null | undefined): ParsedCallba
     return { type: 'new', projectName };
   }
 
+  // rp:<projectName> — resume project: show session list (rejoin like new:)
+  if (type === 'rp') {
+    const projectName = parts.slice(1).join(':');
+    if (!projectName) return null;
+    return { type: 'rp', projectName };
+  }
+
+  // rs:<projectName>:<sessionIdx> — resume specific session
+  // rc:<projectName>:<sessionIdx> — confirmed resume (kill active + restart)
+  // sessionIdx is always the last segment; projectName is everything between
+  if (type === 'rs' || type === 'rc') {
+    if (parts.length < 3) return null;
+    const sessionIdx = parseInt(parts[parts.length - 1], 10);
+    if (isNaN(sessionIdx)) return null;
+    const projectName = parts.slice(1, parts.length - 1).join(':');
+    if (!projectName) return null;
+    return { type, projectName, sessionIdx } as ParsedCallback;
+  }
+
   // opt-submit:<promptId> (only 2 parts)
   if (type === 'opt-submit') {
     if (parts.length < 2 || !parts[1]) return null;

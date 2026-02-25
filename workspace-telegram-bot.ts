@@ -43,6 +43,8 @@ import {
   upsertSession,
   recordProjectUsage,
   getRecentProjects,
+  getResumeableProjects,
+  getClaudeSessionsForProject,
 } from './workspace-router';
 import {
   writeResponse,
@@ -183,6 +185,7 @@ function stopTypingIndicator(): void {
 async function registerBotCommands(): Promise<void> {
   const commands = [
     { command: 'new',      description: 'Start Claude in a project directory' },
+    { command: 'resume',   description: 'Resume a past Claude conversation' },
     { command: 'sessions', description: 'List all active Claude sessions' },
     { command: 'use',      description: 'Set or show default workspace' },
     { command: 'status',   description: 'Show current session output' },
@@ -191,10 +194,13 @@ async function registerBotCommands(): Promise<void> {
     { command: 'help',     description: 'Show available commands' },
   ];
   try {
-    await telegramAPI('setMyCommands', { commands });
+    // Set for both scopes: all_private_chats takes priority over default in private chats.
+    // If all_private_chats was ever set (e.g. via BotFather), default scope is blocked.
+    await telegramAPI('setMyCommands', { commands, scope: { type: 'all_private_chats' } });
+    await telegramAPI('setMyCommands', { commands, scope: { type: 'default' } });
     logger.info('Bot commands registered with Telegram');
   } catch (err: unknown) {
-    logger.warn(`Failed to register bot commands: ${(err as Error).message}`);
+    logger.error(`Failed to register bot commands: ${(err as Error).message}`);
   }
 }
 
@@ -229,6 +235,7 @@ async function handleHelp(): Promise<void> {
     '`/use clear` — Clear default',
     '`/compact [workspace]` — Compact context in workspace',
     '`/new [project]` — Start Claude in a project (shows recent if no arg)',
+    '`/resume [project]` — Resume a past Claude conversation',
     '`/sessions` — List active sessions',
     '`/status [workspace]` — Show tmux output',
     '`/stop [workspace]` — Interrupt running prompt',
@@ -680,6 +687,270 @@ async function startProject(name: string): Promise<void> {
   }
 }
 
+// ── Resume feature ───────────────────────────────────────────────
+
+/** Format a Unix ms timestamp as a human-readable age (e.g. "2h ago"). */
+function formatSessionAge(ms: number): string {
+  const diff = Math.floor((Date.now() - ms) / 60000); // minutes
+  if (diff < 1) return 'just now';
+  if (diff < 60) return `${diff}m ago`;
+  if (diff < 1440) return `${Math.floor(diff / 60)}h ago`;
+  return `${Math.floor(diff / 1440)}d ago`;
+}
+
+async function handleResume(nameArg: string | null): Promise<void> {
+  if (nameArg) {
+    await resumeProject(nameArg);
+    return;
+  }
+
+  const allProjects = getRecentProjects(20);
+  const projects = allProjects
+    .map(p => ({ ...p, sessions: getClaudeSessionsForProject(p.path, 1) }))
+    .filter(p => p.sessions.length > 0);
+
+  if (projects.length === 0) {
+    await sendMessage(
+      'No sessions to resume.\n\nUse `/new` to start one — session IDs are saved automatically.'
+    );
+    return;
+  }
+
+  const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
+  for (let i = 0; i < projects.length; i += 2) {
+    const row = projects.slice(i, i + 2).map(p => ({
+      text: `${p.name} \u2022 ${formatSessionAge(p.sessions[0].lastActivity)}`,
+      callback_data: `rp:${p.name}`,
+    }));
+    keyboard.push(row);
+  }
+
+  await telegramAPI('sendMessage', {
+    chat_id: CHAT_ID,
+    text: '*Resume Session*\n\nSelect a project:',
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: keyboard },
+  });
+}
+
+async function resumeProject(projectName: string): Promise<void> {
+  const allProjects = getRecentProjects(20);
+  const project = allProjects.find(p => p.name === projectName);
+
+  if (!project) {
+    await sendMessage(
+      `No project found for \`${escapeMarkdown(projectName)}\`.\n\nTry /resume to see available projects.`
+    );
+    return;
+  }
+
+  const sessions = getClaudeSessionsForProject(project.path, 5);
+
+  if (sessions.length === 0) {
+    await sendMessage(
+      `No sessions found for \`${escapeMarkdown(projectName)}\`.\n\nUse /new to start one.`
+    );
+    return;
+  }
+
+  // Always show picker — one session per row (full width for snippet)
+  const keyboard: Array<Array<{ text: string; callback_data: string }>> = sessions.map((s, idx) => [{
+    text: `${formatSessionAge(s.lastActivity)}${s.snippet ? ' \u2022 ' + s.snippet : ''}`,
+    callback_data: `rs:${projectName}:${idx}`,
+  }]);
+
+  await telegramAPI('sendMessage', {
+    chat_id: CHAT_ID,
+    text: `*Resume: ${escapeMarkdown(projectName)}*\n\nChoose a conversation:`,
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: keyboard },
+  });
+}
+
+async function resumeSession(projectName: string, sessionIdx: number, force: boolean = false): Promise<void> {
+  const allProjects = getRecentProjects(20);
+  const project = allProjects.find(p => p.name === projectName);
+
+  if (!project) {
+    await sendMessage('Session not found. Try /resume again.');
+    return;
+  }
+
+  const sessions = getClaudeSessionsForProject(project.path, 5);
+  if (sessionIdx < 0 || sessionIdx >= sessions.length) {
+    await sendMessage('Session not found. Try /resume again.');
+    return;
+  }
+
+  const sessionId = sessions[sessionIdx].id;
+  const tmuxName = projectName.replace(/[.:\s]/g, '-');
+  const running = await sessionExists(tmuxName);
+
+  // Look up the bot's tracked session for this workspace (used by multiple checks below)
+  const map = running ? readSessionMap() : {};
+  const currentEntry = running
+    ? Object.values(map).find(s => s.tmuxSession === tmuxName && !isExpired(s))
+    : undefined;
+  const botOwnsThisSession = currentEntry?.sessionId === sessionId;
+
+  // If the bot already has this exact session running, just re-route to it
+  if (running && botOwnsThisSession) {
+    upsertSession({ cwd: project.path, tmuxSession: tmuxName, status: 'waiting', sessionId });
+    recordProjectUsage(projectName, project.path);
+    setDefaultWorkspace(projectName);
+    await sendMessage(`Session \`${tmuxName}\` already running.\nSet as default — send messages directly.`);
+    return;
+  }
+
+  // Check if the JSONL file was written to very recently — the session may be
+  // active in a direct terminal (not managed by the bot). Warn before creating
+  // a second Claude instance on the same conversation.
+  if (!force && !botOwnsThisSession) {
+    const activeThresholdMs = 5 * 60 * 1000; // 5 minutes
+    const age = Date.now() - sessions[sessionIdx].lastActivity;
+    if (age < activeThresholdMs) {
+      await telegramAPI('sendMessage', {
+        chat_id: CHAT_ID,
+        text: `\u26a0\ufe0f This session appears to be *active* (last activity ${formatSessionAge(sessions[sessionIdx].lastActivity)})\n\n` +
+          `Claude Code may be running in a terminal. ` +
+          `Resuming the same session in two places can cause conflicts.\n\n` +
+          `_If you just finished this session, you can safely resume._`,
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '\u25b6\ufe0f Resume anyway', callback_data: `rc:${projectName}:${sessionIdx}` },
+          ]],
+        },
+      });
+      return;
+    }
+  }
+
+  // Handle bot-managed session that needs switching
+  if (running && !botOwnsThisSession) {
+    if (isPtySession(tmuxName)) {
+      // PTY: headless, not reattachable — warn before killing
+      if (!force) {
+        await telegramAPI('sendMessage', {
+          chat_id: CHAT_ID,
+          text: `\u26a0\ufe0f *${escapeMarkdown(projectName)}* has an active PTY session\n\n` +
+            `Resuming a different conversation will terminate it.\n\n` +
+            `_PTY sessions cannot be reattached from a terminal. ` +
+            `You will need to use /resume again if you want to return to the current conversation._`,
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '\u25b6\ufe0f Resume anyway', callback_data: `rc:${projectName}:${sessionIdx}` },
+            ]],
+          },
+        });
+        return;
+      }
+      // Confirmed — kill the PTY so startProjectResume can respawn
+      ptySessionManager.kill(tmuxName);
+      await sleep(300);
+    }
+    // tmux: no warning needed — startProjectResume switches inline
+  }
+
+  await startProjectResume(projectName, project.path, sessionId);
+}
+
+async function startProjectResume(name: string, projectDir: string, sessionId: string): Promise<void> {
+  const tmuxName: string = name.replace(/[.:\s]/g, '-');
+  const shortId: string = sessionId.slice(0, 8);
+
+  // If a tmux session is already running, switch Claude inline (exit + resume)
+  // instead of killing the tmux session. This keeps the user's terminal attached.
+  if (!isPtySession(tmuxName) && await sessionExists(tmuxName)) {
+    try {
+      // Double Ctrl+C: first interrupts any running Claude task,
+      // second clears the input line if Claude returned to its prompt
+      await tmuxExec(`tmux send-keys -t "${tmuxName}" C-c`);
+      await sleep(500);
+      await tmuxExec(`tmux send-keys -t "${tmuxName}" C-c`);
+      await sleep(500);
+      // Exit Claude — if Claude already exited, /exit is harmless in bash
+      // (just an unknown command, won't affect the subsequent claude launch)
+      await tmuxExec(`tmux send-keys -t "${tmuxName}" '/exit' C-m`);
+      await sleep(2000);
+      await tmuxExec(`tmux send-keys -t "${tmuxName}" 'claude --resume ${sessionId}' C-m`);
+    } catch (err: unknown) {
+      await sendMessage(`Failed to switch session: ${(err as Error).message}`);
+      return;
+    }
+
+    upsertSession({ cwd: projectDir, tmuxSession: tmuxName, status: 'starting', sessionId, sessionType: 'tmux' });
+    recordProjectUsage(name, projectDir);
+    setDefaultWorkspace(name);
+
+    const msg = await sendMessage(
+      `Switched Claude session in *${escapeMarkdown(name)}*\n\n` +
+      `*Path:* \`${projectDir}\`\n` +
+      `*Session:* \`${tmuxName}\`\n` +
+      `*Resumed:* \`${shortId}...\`\n\n` +
+      `Default workspace set — send messages directly.`
+    ) as TelegramMessage | undefined;
+    if (msg && msg.message_id) {
+      trackNotificationMessage(msg.message_id, name, 'resume-session');
+    }
+    return;
+  }
+
+  // No session running — create a new one
+  const usePty = !TMUX_AVAILABLE || INJECTION_MODE === 'pty';
+
+  if (!usePty) {
+    try {
+      await tmuxExec(`tmux new-session -d -s "${tmuxName}" -c "${projectDir}"`);
+      await sleep(300);
+      await tmuxExec(`tmux send-keys -t "${tmuxName}" 'claude --resume ${sessionId}' C-m`);
+    } catch (err: unknown) {
+      await sendMessage(`Failed to start session: ${(err as Error).message}`);
+      return;
+    }
+
+    upsertSession({ cwd: projectDir, tmuxSession: tmuxName, status: 'starting', sessionId, sessionType: 'tmux' });
+    recordProjectUsage(name, projectDir);
+    setDefaultWorkspace(name);
+
+    const msg = await sendMessage(
+      `Resumed Claude in *${escapeMarkdown(name)}*\n\n` +
+      `*Path:* \`${projectDir}\`\n` +
+      `*Session:* \`${tmuxName}\`\n` +
+      `*Resumed:* \`${shortId}...\`\n\n` +
+      `Default workspace set — send messages directly.`
+    ) as TelegramMessage | undefined;
+    if (msg && msg.message_id) {
+      trackNotificationMessage(msg.message_id, name, 'resume-session');
+    }
+  } else if (ptySessionManager.isAvailable()) {
+    const ok = ptySessionManager.spawn(tmuxName, projectDir, ['--resume', sessionId]);
+    if (!ok) { await sendMessage('Failed to spawn PTY session.'); return; }
+
+    upsertSession({ cwd: projectDir, tmuxSession: tmuxName, status: 'starting', sessionId, sessionType: 'pty' });
+    recordProjectUsage(name, projectDir);
+    setDefaultWorkspace(name);
+
+    const msg = await sendMessage(
+      `Resumed Claude in *${escapeMarkdown(name)}*\n\n` +
+      `*Path:* \`${projectDir}\`\n` +
+      `*Session:* \`${tmuxName}\`\n` +
+      `*Resumed:* \`${shortId}...\`\n\n` +
+      `Default workspace set — send messages directly.\n\n` +
+      `_Headless PTY mode — full Telegram control. Not attachable from terminal._`
+    ) as TelegramMessage | undefined;
+    if (msg && msg.message_id) {
+      trackNotificationMessage(msg.message_id, name, 'resume-session');
+    }
+  } else {
+    await sendMessage(
+      '\u26a0\ufe0f tmux not found and node-pty not installed.\n' +
+      'Install tmux or run: `npm install node-pty` in ~/.ccgram/'
+    );
+  }
+}
+
 async function injectAndRespond(session: SessionEntry, command: string, workspace: string): Promise<boolean> {
   const tmuxName: string = session.tmuxSession;
 
@@ -804,6 +1075,36 @@ async function processCallbackQuery(query: TelegramCallbackQuery): Promise<void>
       await editMessageText(chatId, messageId!, `${originalText}\n\n— Starting *${escapeMarkdown(projectName)}*...`);
     } catch {}
     await startProject(projectName);
+    return;
+  }
+
+  // Handle rp: callback (format: rp:<projectName>) — show session picker or resume directly
+  if (type === 'rp') {
+    const { projectName } = parsed;
+    await answerCallbackQuery(query.id, `Loading ${projectName}...`);
+    try {
+      await editMessageText(chatId, messageId!, `${originalText}\n\n— Loading sessions...`);
+    } catch {}
+    await resumeProject(projectName);
+    return;
+  }
+
+  // Handle rs: callback (format: rs:<projectName>:<sessionIdx>) — resume specific session
+  if (type === 'rs') {
+    const { projectName, sessionIdx } = parsed;
+    await answerCallbackQuery(query.id, 'Starting resume...');
+    await resumeSession(projectName, sessionIdx);
+    return;
+  }
+
+  // Handle rc: callback (format: rc:<projectName>:<sessionIdx>) — confirmed resume (kill active + restart)
+  if (type === 'rc') {
+    const { projectName, sessionIdx } = parsed;
+    await answerCallbackQuery(query.id, 'Resuming...');
+    try {
+      await editMessageText(chatId, messageId!, `${originalText}\n\n\u2014 Resuming...`);
+    } catch {}
+    await resumeSession(projectName, sessionIdx, true);
     return;
   }
 
@@ -1087,6 +1388,13 @@ async function processMessage(msg: TelegramMessage): Promise<void> {
   const newMatch: RegExpMatchArray | null = text.match(/^\/new(?:\s+(.+))?$/);
   if (newMatch) {
     await handleNew(newMatch[1] ? newMatch[1].trim() : null);
+    return;
+  }
+
+  // /resume [project]
+  const resumeMatch: RegExpMatchArray | null = text.match(/^\/resume(?:\s+(.+))?$/);
+  if (resumeMatch) {
+    await handleResume(resumeMatch[1] ? resumeMatch[1].trim() : null);
     return;
   }
 

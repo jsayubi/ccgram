@@ -69,9 +69,10 @@ export class PtySessionManager {
 
   /**
    * Spawn a new headless PTY session running the claude CLI.
+   * @param args  Optional CLI args passed to claude (e.g. ['--resume', '<id>'])
    * @returns true on success, false on failure
    */
-  spawn(name: string, cwd: string): boolean {
+  spawn(name: string, cwd: string, args: string[] = []): boolean {
     if (!this.ptyModule) return false;
 
     // Kill any existing handle for this name to avoid orphaned processes
@@ -81,7 +82,7 @@ export class PtySessionManager {
 
     try {
       const claudePath = process.env.CLAUDE_CLI_PATH || 'claude';
-      const pty = this.ptyModule.spawn(claudePath, [], {
+      const pty = this.ptyModule.spawn(claudePath, args, {
         name: 'xterm-256color',
         cols: 220,
         rows: 50,

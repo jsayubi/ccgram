@@ -31,9 +31,29 @@ export interface CallbackQperm {
   optionIndex: number;
 }
 
+export interface CallbackResumeProject {
+  type: 'rp';
+  projectName: string;
+}
+
+export interface CallbackResumeSession {
+  type: 'rs';
+  projectName: string;
+  sessionIdx: number;
+}
+
+export interface CallbackResumeConfirm {
+  type: 'rc';
+  projectName: string;
+  sessionIdx: number;
+}
+
 export type ParsedCallback =
   | CallbackNew
   | CallbackPerm
   | CallbackOpt
   | CallbackOptSubmit
-  | CallbackQperm;
+  | CallbackQperm
+  | CallbackResumeProject
+  | CallbackResumeSession
+  | CallbackResumeConfirm;

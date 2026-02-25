@@ -2,6 +2,25 @@
 
 All notable changes to CCGram are documented here.
 
+## [1.1.0] - 2026-02-24
+
+### Features
+- **`/resume` command** — resume past Claude Code conversations from Telegram, reading directly from Claude Code's session storage (`~/.claude/projects/`)
+- **Session picker with snippets** — shows the first user message from each session for easy identification; empty stub sessions (no user messages) are automatically filtered out
+- **Smart active-session detection** — warns before resuming a session that appears to be running in a direct terminal (based on JSONL file mtime within 5 minutes), preventing dual-instance conflicts
+- **PTY resume warning** — shows confirmation prompt before killing a headless PTY session (which cannot be reattached from terminal)
+- **tmux inline session switching** — when switching to a different Claude session in tmux, injects `/exit` + `claude --resume` into the existing session instead of killing it, keeping the user's terminal attached
+- **PTY `--resume` support** — `ptySessionManager.spawn()` now accepts CLI args (e.g. `['--resume', '<id>']`)
+- **`rc:` callback type** — confirmation flow for destructive resume operations (PTY kill, active-session override)
+
+### Improvements
+- Bot command menu now registers on both `all_private_chats` and `default` scopes (fixes menu not appearing when previously set via BotFather)
+- `/help` output now includes `/resume` command
+- `recordProjectUsage()` tracks session IDs in `project-history.json` (deduped, capped at 5 per project)
+- 84 tests across 4 suites (up from 65)
+
+---
+
 ## [1.0.2] - 2026-02-23
 
 ### Security

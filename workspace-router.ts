@@ -10,6 +10,7 @@
 
 import crypto from 'crypto';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { PROJECT_ROOT } from './src/utils/paths';
 require('dotenv').config({ path: path.join(PROJECT_ROOT, '.env'), quiet: true });
@@ -21,6 +22,7 @@ import type {
   MessageWorkspaceEntry,
   MessageWorkspaceMap,
   ProjectHistoryMap,
+  SessionHistoryEntry,
 } from './src/types';
 
 const logger = new Logger('router');
@@ -170,7 +172,7 @@ function upsertSession({ cwd, tmuxSession, status, sessionId, sessionType }: {
   };
 
   writeSessionMap(map);
-  recordProjectUsage(workspace!, cwd);
+  recordProjectUsage(workspace!, cwd, sessionId ?? undefined);
   return { token, workspace };
 }
 
@@ -345,9 +347,24 @@ function readProjectHistory(): ProjectHistoryMap {
   } catch { return {}; }
 }
 
-function recordProjectUsage(name: string, projectPath: string): void {
+const MAX_SESSION_HISTORY = 5;
+
+function recordProjectUsage(name: string, projectPath: string, sessionId?: string | null): void {
   const history = readProjectHistory();
-  history[name] = { path: projectPath, lastUsed: Date.now() };
+  const existing = history[name];
+  const existingSessions: SessionHistoryEntry[] = existing?.sessions || [];
+
+  let sessions: SessionHistoryEntry[];
+  if (sessionId) {
+    // Deduplicate, prepend new entry, cap at MAX_SESSION_HISTORY
+    const filtered = existingSessions.filter(s => s.id !== sessionId);
+    filtered.unshift({ id: sessionId, startedAt: Date.now() });
+    sessions = filtered.slice(0, MAX_SESSION_HISTORY);
+  } else {
+    sessions = existingSessions;
+  }
+
+  history[name] = { path: projectPath, lastUsed: Date.now(), sessions };
   const entries = Object.entries(history).sort((a, b) => b[1].lastUsed - a[1].lastUsed);
   const trimmed = Object.fromEntries(entries.slice(0, 50));
   const dir = path.dirname(PROJECT_HISTORY_PATH);
@@ -430,6 +447,97 @@ function getRecentProjects(limit: number = 10): Array<{ name: string; path: stri
   return result.map(({ name, path: p }) => ({ name, path: p }));
 }
 
+/**
+ * Return projects that have at least one stored Claude Code session ID.
+ * Used by /resume to list resumeable conversations.
+ */
+function getResumeableProjects(limit: number = 10): Array<{ name: string; path: string; sessions: SessionHistoryEntry[] }> {
+  const history = readProjectHistory();
+  return Object.entries(history)
+    .filter(([, d]) => d.sessions && d.sessions.length > 0)
+    .filter(([, d]) => {
+      try { return fs.statSync(d.path).isDirectory(); } catch { return false; }
+    })
+    .sort((a, b) => b[1].lastUsed - a[1].lastUsed)
+    .slice(0, limit)
+    .map(([name, d]) => ({ name, path: d.path, sessions: d.sessions! }));
+}
+
+/**
+ * Read Claude Code's session storage for a project directory and return
+ * the most recent sessions, sorted by file mtime (last activity).
+ *
+ * Claude Code stores sessions in ~/.claude/projects/<encoded-path>/<uuid>.jsonl
+ * where the path encoding replaces every "/" with "-" (including the leading slash).
+ */
+function getClaudeSessionsForProject(
+  projectPath: string,
+  limit: number = 5,
+): Array<{ id: string; lastActivity: number; snippet: string | null }> {
+  const home = process.env.HOME || os.homedir();
+  const encoded = projectPath.replace(/\//g, '-');
+  const sessionDir = path.join(home, '.claude', 'projects', encoded);
+
+  let files: string[];
+  try {
+    const entries = fs.readdirSync(sessionDir, { withFileTypes: true });
+    files = entries
+      .filter(e => e.isFile() && e.name.endsWith('.jsonl'))
+      .map(e => path.join(sessionDir, e.name));
+  } catch {
+    return [];
+  }
+
+  const withMtime = files
+    .map(f => {
+      try {
+        return { f, mtime: fs.statSync(f).mtimeMs };
+      } catch {
+        return null;
+      }
+    })
+    .filter((x): x is { f: string; mtime: number } => x !== null);
+
+  withMtime.sort((a, b) => b.mtime - a.mtime);
+
+  // Extract snippets and filter out empty stubs (no user messages)
+  const results: Array<{ id: string; lastActivity: number; snippet: string | null }> = [];
+  for (const { f, mtime } of withMtime) {
+    if (results.length >= limit) break;
+
+    const id = path.basename(f, '.jsonl');
+    let snippet: string | null = null;
+
+    try {
+      const content = fs.readFileSync(f, 'utf8');
+      const lines = content.split('\n').slice(0, 30);
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const obj = JSON.parse(line);
+          if (obj.type === 'user' && obj.message?.role === 'user') {
+            const c = obj.message.content;
+            if (typeof c === 'string') {
+              snippet = c.trim().slice(0, 35);
+            } else if (Array.isArray(c)) {
+              const textItem = c.find((x: { type: string }) => x.type === 'text') as { type: string; text?: string } | undefined;
+              if (textItem?.text) snippet = textItem.text.trim().slice(0, 35);
+            }
+            if (snippet) break;
+          }
+        } catch { /* malformed line, skip */ }
+      }
+    } catch { /* unreadable file, skip */ }
+
+    // Skip empty stub sessions (no user message found)
+    if (!snippet) continue;
+
+    results.push({ id, lastActivity: mtime, snippet });
+  }
+
+  return results;
+}
+
 export {
   extractWorkspaceName,
   readSessionMap,
@@ -446,5 +554,7 @@ export {
   getWorkspaceForMessage,
   recordProjectUsage,
   getRecentProjects,
+  getResumeableProjects,
+  getClaudeSessionsForProject,
   SESSION_MAP_PATH,
 };

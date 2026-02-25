@@ -2,7 +2,7 @@
 
 # CCGram
 
-**Control Claude Code from Telegram — approve permissions, answer questions, and manage AI sessions from your phone.**
+**Control Claude Code from Telegram — approve permissions, answer questions, resume sessions, and manage AI coding agents from your phone.**
 
 [![CI](https://github.com/jsayubi/ccgram/actions/workflows/ci.yml/badge.svg)](https://github.com/jsayubi/ccgram/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/@jsayubi/ccgram)](https://www.npmjs.com/package/@jsayubi/ccgram)
@@ -13,7 +13,7 @@
 
 ---
 
-CCGram is a self-hosted Telegram bot that bridges Claude Code to your phone. When Claude needs a permission, has a question, or finishes a task — you get a Telegram message with inline buttons to respond. You never need to be at your keyboard.
+CCGram is a self-hosted Telegram bot that bridges Claude Code to your phone. When Claude needs a permission, has a question, or finishes a task — you get a Telegram message with inline buttons to respond. Resume past conversations, start new sessions, and manage multiple AI coding agents — all without being at your keyboard.
 
 ```
 Claude Code  →  ccgram hooks  →  Telegram bot  →  📱 your phone
@@ -28,6 +28,7 @@ Claude Code  →  ccgram hooks  →  Telegram bot  →  📱 your phone
 - **Smart notifications** — Task completions, session start/end, and subagent activity — silent when you're at your terminal, instant when you're away
 - **Remote command routing** — Send any command to any Claude session from Telegram
 - **Session management** — List, switch between, and interrupt active sessions
+- **Resume conversations** — `/resume` reads your full Claude Code session history with conversation snippets — pick up any past conversation in one tap
 - **Project launcher** — Start Claude in any project directory with `/new myproject`
 - **Smart routing** — Prefix matching, default workspace, reply-to routing
 - **Typing indicator** — See when the bot is waiting for Claude to respond
@@ -125,6 +126,22 @@ Claude asks a question (AskUserQuestion)
 | `/new myproject` | Start Claude in `~/projects/myproject` (or wherever it's found) |
 
 The `/new` command searches your configured `PROJECT_DIRS`, finds exact or prefix-matched directories, creates a tmux session (or PTY session if tmux is unavailable), starts Claude, and sets it as the default workspace.
+
+### Resume past conversations
+
+| Command | Description |
+|---------|-------------|
+| `/resume` | Show projects with past Claude sessions |
+| `/resume myproject` | Jump straight to session picker for that project |
+
+The `/resume` command reads directly from Claude Code's session storage (`~/.claude/projects/`), giving you access to your full conversation history — not just sessions started through the bot.
+
+Each session shows a snippet of the first message for easy identification. Sessions are sorted by last activity.
+
+**Active session protection:**
+- If a session appears to be running in a terminal (JSONL file modified within 5 min), you get a warning before resuming to prevent dual-instance conflicts
+- If a PTY session is running, you're warned that it will be terminated (PTY sessions can't be reattached)
+- tmux sessions switch seamlessly — the bot injects `/exit` + `claude --resume` inline, keeping your terminal connected
 
 ### Smart routing
 
@@ -235,7 +252,7 @@ node dist/workspace-telegram-bot.js
 ```bash
 npm run build          # Compile TypeScript → dist/
 npm run build:watch    # Watch mode
-npm test               # Run 57 tests (vitest)
+npm test               # Run 84 tests (vitest)
 ```
 
 **Note:** Claude Code hooks run from `~/.ccgram/dist/`, not the repo's `dist/`. After changing hook scripts during development, sync them:
@@ -276,8 +293,9 @@ cli.ts                         # ccgram CLI entry point
 ```
 test/
 ├── prompt-bridge.test.js     # 15 tests — IPC write/read/update/clean/expiry
-├── workspace-router.test.js  # 28 tests — session map, prefix matching, defaults, reply-to
-└── callback-parser.test.js   # 14 tests — all callback_data formats
+├── workspace-router.test.js  # 38 tests — session map, prefix matching, defaults, reply-to, session history
+├── callback-parser.test.js   # 23 tests — all callback_data formats (perm, opt, new, rp, rs, rc)
+└── active-check.test.js      #  8 tests — terminal activity detection, thresholds
 ```
 
 Tests use isolated temp directories and run with `npm test` (vitest, no configuration needed).
@@ -302,6 +320,9 @@ All notifications — including permission requests — are suppressed automatic
 
 **Can I use it with multiple projects at once?**
 Yes. Each Claude session maps to a named tmux or PTY session. Use `/sessions` to see all active sessions, or `/use <workspace>` to set a default for plain text routing.
+
+**Can I resume a conversation I started in the terminal?**
+Yes. `/resume` reads from Claude Code's own session storage, so it sees every conversation — not just ones started through the bot. If the session is still running in your terminal, you'll get a warning before resuming to prevent conflicts.
 
 **Do I need tmux?**
 No. When tmux is not detected, CCGram automatically falls back to headless PTY sessions powered by [`node-pty`](https://github.com/microsoft/node-pty). No configuration required — it activates on its own.
@@ -331,7 +352,7 @@ MIT — see [LICENSE](LICENSE).
 
 <div align="center">
 
-Built for developers who let Claude Code run overnight and want to stay in control from anywhere.
+Built for developers who run Claude Code unattended — approve permissions, resume conversations, and manage AI coding agents from anywhere.
 
 [Report a bug](https://github.com/jsayubi/ccgram/issues) · [Request a feature](https://github.com/jsayubi/ccgram/issues)
 

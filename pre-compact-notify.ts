@@ -29,10 +29,16 @@ const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const POLL_INTERVAL_MS = 500;
 const POLL_TIMEOUT_MS = 30000; // 30 seconds to decide
 
-/** Output format for blocking compaction */
+/** Output format for blocking compaction.
+ *
+ * PreCompact uses TOP-LEVEL `decision` (not nested in hookSpecificOutput).
+ * `hookSpecificOutput` only carries `hookEventName` for identification.
+ */
 interface PreCompactOutput {
+  decision: 'block';
+  reason: string;
   hookSpecificOutput: {
-    decision: 'block';
+    hookEventName: 'PreCompact';
   };
 }
 
@@ -101,8 +107,10 @@ async function main(): Promise<void> {
 
   if (response && response.action === 'block') {
     const output: PreCompactOutput = {
+      decision: 'block',
+      reason: 'User blocked compaction via Telegram to preserve context',
       hookSpecificOutput: {
-        decision: 'block',
+        hookEventName: 'PreCompact',
       },
     };
     process.stdout.write(JSON.stringify(output) + '\n');

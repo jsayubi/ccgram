@@ -27,9 +27,11 @@ const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const POLL_INTERVAL_MS = 500;
 const POLL_TIMEOUT_MS = 30000; // 30 seconds for permission denied (shorter than regular permission)
 
-/** Output format for retry */
+/** Output format for retry. `hookEventName` is required — missing it causes
+ * Claude Code to silently ignore the retry signal. */
 interface PermissionDeniedOutput {
   hookSpecificOutput: {
+    hookEventName: 'PermissionDenied';
     retry: boolean;
   };
 }
@@ -99,6 +101,7 @@ async function main(): Promise<void> {
   if (response && response.action === 'retry') {
     const output: PermissionDeniedOutput = {
       hookSpecificOutput: {
+        hookEventName: 'PermissionDenied',
         retry: true,
       },
     };

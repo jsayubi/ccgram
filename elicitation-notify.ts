@@ -4,10 +4,18 @@
  * Elicitation Notify — Called by Claude Code's Elicitation hook.
  *
  * BLOCKING mode: Forwards MCP server input requests to Telegram, polls for
- * user response, then outputs the answer via stdout.
+ * user responses (one per form field), then outputs the answer via stdout.
  *
- * Stdin JSON: { mcp_server, prompt, cwd, session_id, ... }
- * Stdout: { hookSpecificOutput: { response: "user input" } }
+ * Stdin JSON: { mcp_server_name, requested_schema, cwd, session_id, ... }
+ *   requested_schema: JSON Schema object with `properties` describing form fields
+ *
+ * Stdout: {
+ *   hookSpecificOutput: {
+ *     hookEventName: "Elicitation",
+ *     action: "accept" | "decline" | "cancel",
+ *     content: { <fieldName>: <value> }   // required when action === "accept"
+ *   }
+ * }
  */
 
 import path from 'path';
@@ -28,10 +36,19 @@ const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const POLL_INTERVAL_MS = 500;
 const POLL_TIMEOUT_MS = 120000; // 2 minutes for user input
 
-/** Output format for elicitation response */
+/** Schema property definition from MCP `requested_schema.properties`. */
+interface SchemaProperty {
+  type?: string;
+  description?: string;
+  enum?: string[];
+}
+
+/** Output format for elicitation response. */
 interface ElicitationOutput {
   hookSpecificOutput: {
-    response: string;
+    hookEventName: 'Elicitation';
+    action: 'accept' | 'decline' | 'cancel';
+    content?: Record<string, string>;
   };
 }
 
@@ -54,51 +71,103 @@ async function main(): Promise<void> {
     return;
   }
 
-  const mcpServer = (payload.mcp_server as string) || 'Unknown MCP';
-  const prompt = (payload.prompt as string) || 'Input required';
+  // Payload uses `mcp_server_name` (newer) — fall back to `mcp_server` for safety
+  const mcpServer = (payload.mcp_server_name as string) || (payload.mcp_server as string) || 'Unknown MCP';
+  const schema = (payload.requested_schema as Record<string, unknown>) || {};
+  const properties = (schema.properties as Record<string, SchemaProperty>) || {};
+  const fieldNames = Object.keys(properties);
   const cwd = (payload.cwd as string) || process.cwd();
   const workspace = extractWorkspaceName(cwd)!;
 
-  const promptId = generatePromptId();
-
-  let messageText = `\u{1F50C} *MCP Input Required* — ${escapeMarkdown(workspace)}\n\n`;
-  messageText += `*Server:* \`${escapeMarkdown(mcpServer)}\`\n\n`;
-  messageText += `${escapeMarkdown(prompt)}\n\n`;
-  messageText += `_Reply to this message with your answer_`;
-
-  // Write pending file
-  writePending(promptId, {
-    type: 'elicitation',
-    workspace,
-    mcpServer,
-    prompt,
-  });
-
-  // Send Telegram message
-  try {
-    const result = await sendTelegram(messageText);
-    if (result && result.message_id) {
-      trackNotificationMessage(result.message_id, workspace, 'elicitation');
-    }
-  } catch (err: unknown) {
-    process.stderr.write(`[elicitation-notify] Telegram send failed: ${(err as Error).message}\n`);
-    cleanPrompt(promptId);
+  // If the schema has no fields, decline — we can't build a meaningful response.
+  if (fieldNames.length === 0) {
+    emitDecline();
     return;
   }
 
-  // Poll for response
-  const response = await pollForResponse(promptId);
-  cleanPrompt(promptId);
+  // Prompt the user one field at a time. Any field that doesn't get an answer
+  // (timeout) cancels the whole elicitation.
+  const content: Record<string, string> = {};
 
-  if (response && response.textAnswer) {
-    const output: ElicitationOutput = {
-      hookSpecificOutput: {
-        response: response.textAnswer as string,
-      },
-    };
-    process.stdout.write(JSON.stringify(output) + '\n');
+  for (let i = 0; i < fieldNames.length; i++) {
+    const fieldName = fieldNames[i];
+    const prop = properties[fieldName];
+    const promptId = generatePromptId();
+
+    let messageText = `\u{1F50C} *MCP Input Required* — ${escapeMarkdown(workspace)}\n\n`;
+    messageText += `*Server:* \`${escapeMarkdown(mcpServer)}\`\n`;
+    if (fieldNames.length > 1) {
+      messageText += `*Field ${i + 1} of ${fieldNames.length}:* \`${escapeMarkdown(fieldName)}\`\n\n`;
+    } else {
+      messageText += `*Field:* \`${escapeMarkdown(fieldName)}\`\n\n`;
+    }
+    if (prop.description) {
+      messageText += `${escapeMarkdown(prop.description)}\n\n`;
+    }
+    if (prop.enum && prop.enum.length > 0) {
+      messageText += `_Allowed values:_ ${prop.enum.map(v => `\`${escapeMarkdown(v)}\``).join(', ')}\n\n`;
+    }
+    messageText += `_Reply to this message with your answer_`;
+
+    writePending(promptId, {
+      type: 'elicitation',
+      workspace,
+      mcpServer,
+      fieldName,
+    });
+
+    try {
+      const result = await sendTelegram(messageText);
+      if (result && result.message_id) {
+        trackNotificationMessage(result.message_id, workspace, 'elicitation');
+      }
+    } catch (err: unknown) {
+      process.stderr.write(`[elicitation-notify] Telegram send failed: ${(err as Error).message}\n`);
+      cleanPrompt(promptId);
+      emitCancel();
+      return;
+    }
+
+    const response = await pollForResponse(promptId);
+    cleanPrompt(promptId);
+
+    if (!response || typeof response.textAnswer !== 'string') {
+      // Timeout or missing answer — cancel the whole elicitation
+      emitCancel();
+      return;
+    }
+
+    content[fieldName] = response.textAnswer as string;
   }
-  // If no response, exit silently — MCP will handle timeout
+
+  const output: ElicitationOutput = {
+    hookSpecificOutput: {
+      hookEventName: 'Elicitation',
+      action: 'accept',
+      content,
+    },
+  };
+  process.stdout.write(JSON.stringify(output) + '\n');
+}
+
+function emitDecline(): void {
+  const output: ElicitationOutput = {
+    hookSpecificOutput: {
+      hookEventName: 'Elicitation',
+      action: 'decline',
+    },
+  };
+  process.stdout.write(JSON.stringify(output) + '\n');
+}
+
+function emitCancel(): void {
+  const output: ElicitationOutput = {
+    hookSpecificOutput: {
+      hookEventName: 'Elicitation',
+      action: 'cancel',
+    },
+  };
+  process.stdout.write(JSON.stringify(output) + '\n');
 }
 
 // ── Polling ─────────────────────────────────────────────────────

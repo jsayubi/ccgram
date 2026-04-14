@@ -59,6 +59,7 @@ import { parseCallbackData } from './src/utils/callback-parser';
 import { ptySessionManager } from './src/utils/pty-session-manager';
 import { ghosttySessionManager } from './src/utils/ghostty-session-manager';
 import { generateDeepLink, canGenerateDeepLink } from './src/utils/deep-link';
+import { readTranscriptStatus, type TranscriptStatus } from './src/utils/transcript-reader';
 import Logger from './src/core/logger';
 import type {
   TelegramMessage,
@@ -473,41 +474,136 @@ async function handleStatus(workspaceArg: string | null): Promise<void> {
   const match = resolved.match;
   const resolvedName: string = resolved.workspace;
   const tmuxName: string = match.session.tmuxSession;
+  const session = match.session;
 
-  try {
-    const output: string = await sessionCaptureOutput(tmuxName, match.session);
-    // Trim and take last 20 lines to avoid message length limits
-    const trimmed: string = output.trim().split('\n').slice(-20).join('\n');
+  // Read transcript status (model, context, branch, last message, ...).
+  // Available for any terminal type — Ghostty, tmux, PTY, bare.
+  const transcript: TranscriptStatus | null = readTranscriptStatus(session.cwd, session.sessionId ?? undefined);
 
-    // Build rate limit info if available
-    let rateLimitInfo = '';
-    const rateLimit = getSessionRateLimit(resolvedName);
-    if (rateLimit && rateLimit.remaining !== undefined) {
-      const pct = rateLimit.limit ? Math.round((rateLimit.remaining / rateLimit.limit) * 100) : null;
-      const pctStr = pct !== null ? ` (${pct}%)` : '';
-      let resetStr = '';
-      if (rateLimit.resetsAt) {
-        const resetDate = new Date(rateLimit.resetsAt * 1000);
-        const now = new Date();
-        const diffMs = resetDate.getTime() - now.getTime();
-        if (diffMs > 0) {
-          const mins = Math.ceil(diffMs / 60000);
-          resetStr = mins > 60 ? ` \u2022 resets in ${Math.round(mins / 60)}h` : ` \u2022 resets in ${mins}m`;
-        }
-      }
-      rateLimitInfo = `\n\n<i>\u{1F4CA} Rate limit: ${rateLimit.remaining}/${rateLimit.limit || '?'}${pctStr}${resetStr}</i>`;
-    }
-
-    const htmlMsg: string = `<b>${escapeHtml(resolvedName)}</b> session output:\n<pre>${escapeHtml(trimmed)}</pre>${rateLimitInfo}`;
+  // For tmux/PTY, capture the pane output as before.
+  // For Ghostty (where scrollback capture doesn't work via AppleScript),
+  // skip the pane capture and rely on the transcript's last assistant message.
+  const useGhostty = (isGhosttySession(session) || ghosttySessionManager.has(tmuxName));
+  let paneOutput: string | null = null;
+  if (!useGhostty) {
     try {
-      await sendHtmlMessage(htmlMsg);
-    } catch {
-      // Fallback to plain text if HTML fails
-      await telegramAPI('sendMessage', { chat_id: CHAT_ID, text: `${resolvedName} session output:\n${trimmed}` });
+      const raw = await sessionCaptureOutput(tmuxName, session);
+      paneOutput = raw.trim().split('\n').slice(-20).join('\n');
+    } catch (err: unknown) {
+      paneOutput = `(capture failed: ${(err as Error).message})`;
     }
-  } catch (err: unknown) {
-    await sendMessage(`Could not read session \`${tmuxName}\`: ${(err as Error).message}`);
   }
+
+  const htmlMsg = buildStatusMessage(resolvedName, session, transcript, paneOutput);
+  try {
+    await sendHtmlMessage(htmlMsg);
+  } catch {
+    // Fallback: strip HTML tags and send as plain text.
+    const plain = htmlMsg.replace(/<[^>]+>/g, '');
+    await telegramAPI('sendMessage', { chat_id: CHAT_ID, text: plain });
+  }
+}
+
+/** Format the rich /status message as HTML for Telegram. */
+function buildStatusMessage(
+  workspace: string,
+  session: SessionEntry,
+  transcript: TranscriptStatus | null,
+  paneOutput: string | null
+): string {
+  const lines: string[] = [];
+  lines.push(`\u{1F4CA} <b>${escapeHtml(workspace)}</b>`);
+
+  // Model + version
+  if (transcript?.model) {
+    const versionStr = transcript.version ? ` <i>(cc ${escapeHtml(transcript.version)})</i>` : '';
+    lines.push(`\u{1F916} <b>Model:</b> <code>${escapeHtml(transcript.model)}</code>${versionStr}`);
+  }
+
+  // Working directory
+  const cwd = transcript?.cwd || session.cwd;
+  if (cwd) lines.push(`\u{1F4C1} <b>Path:</b> <code>${escapeHtml(cwd)}</code>`);
+
+  // Git branch
+  if (transcript?.gitBranch) {
+    lines.push(`\u{1F33F} <b>Branch:</b> <code>${escapeHtml(transcript.gitBranch)}</code>`);
+  }
+
+  // Session
+  if (transcript?.sessionId || session.sessionId) {
+    const sid = (transcript?.sessionId || session.sessionId)!;
+    const slugStr = transcript?.slug ? ` <i>(${escapeHtml(transcript.slug)})</i>` : '';
+    lines.push(`\u{1F194} <b>Session:</b> <code>${escapeHtml(sid.slice(0, 8))}</code>${slugStr}`);
+  }
+
+  // Context window usage
+  if (transcript?.contextTokens !== undefined) {
+    const tokensStr = transcript.contextTokens.toLocaleString();
+    if (transcript.contextLimit && transcript.contextPct !== undefined) {
+      const limitStr = transcript.contextLimit.toLocaleString();
+      lines.push(`\u{1F4C8} <b>Context:</b> ${tokensStr} / ${limitStr} (${transcript.contextPct}%)`);
+    } else {
+      lines.push(`\u{1F4C8} <b>Context:</b> ${tokensStr} tokens`);
+    }
+  }
+
+  // Last activity
+  if (transcript?.lastAssistantTimestamp) {
+    const ago = formatRelativeTime(new Date(transcript.lastAssistantTimestamp));
+    if (ago) lines.push(`\u23F1 <b>Last activity:</b> ${ago}`);
+  }
+
+  // Rate limit
+  const rateLimit = getSessionRateLimit(workspace);
+  if (rateLimit && rateLimit.remaining !== undefined) {
+    const pct = rateLimit.limit ? Math.round((rateLimit.remaining / rateLimit.limit) * 100) : null;
+    const pctStr = pct !== null ? ` (${pct}%)` : '';
+    let resetStr = '';
+    if (rateLimit.resetsAt) {
+      const resetMs = rateLimit.resetsAt * 1000 - Date.now();
+      if (resetMs > 0) {
+        const mins = Math.ceil(resetMs / 60000);
+        resetStr = mins > 60 ? ` \u2022 resets in ${Math.round(mins / 60)}h` : ` \u2022 resets in ${mins}m`;
+      }
+    }
+    lines.push(`\u{1F4E1} <b>Rate limit:</b> ${rateLimit.remaining}/${rateLimit.limit || '?'}${pctStr}${resetStr}`);
+  }
+
+  // Last assistant message (Ghostty only — for tmux/PTY we show pane output instead)
+  if (paneOutput === null && transcript?.lastAssistantMessage) {
+    lines.push('');
+    lines.push('\u{1F4AC} <b>Last message:</b>');
+    lines.push(`<pre>${escapeHtml(transcript.lastAssistantMessage)}</pre>`);
+  }
+
+  // Pane output for tmux/PTY
+  if (paneOutput !== null) {
+    lines.push('');
+    lines.push('\u{1F4DD} <b>Recent output:</b>');
+    lines.push(`<pre>${escapeHtml(paneOutput)}</pre>`);
+  }
+
+  // Fallback when we have nothing
+  if (!transcript && paneOutput === null) {
+    lines.push('');
+    lines.push('<i>No transcript or pane output available.</i>');
+  }
+
+  return lines.join('\n');
+}
+
+/** Format a Date as "Xs ago" / "Xm ago" / "Xh ago" relative to now. */
+function formatRelativeTime(d: Date): string | null {
+  const ms = Date.now() - d.getTime();
+  if (ms < 0) return null;
+  const sec = Math.round(ms / 1000);
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.round(sec / 60);
+  if (min < 60) return `${min} min ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.round(hr / 24);
+  return `${day}d ago`;
 }
 
 async function handleStop(workspaceArg: string | null): Promise<void> {

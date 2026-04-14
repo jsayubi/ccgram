@@ -23,6 +23,7 @@ import type {
   MessageWorkspaceMap,
   ProjectHistoryMap,
   SessionHistoryEntry,
+  RateLimitInfo,
 } from './src/types';
 
 const logger = new Logger('router');
@@ -134,12 +135,13 @@ function listActiveSessions(): Array<{ workspace: string; token: string; session
  * Register or update a session in the map.
  * Called by the hook notifier when Claude starts/stops.
  */
-function upsertSession({ cwd, tmuxSession, status, sessionId, sessionType }: {
+function upsertSession({ cwd, tmuxSession, status, sessionId, sessionType, rateLimit }: {
   cwd: string;
   tmuxSession: string;
   status: string;
   sessionId?: string | null;
-  sessionType?: 'tmux' | 'pty';
+  sessionType?: 'tmux' | 'pty' | 'ghostty';
+  rateLimit?: RateLimitInfo;
 }): { token: string; workspace: string | null } {
   const map = readSessionMap();
   const workspace = extractWorkspaceName(cwd);
@@ -159,6 +161,8 @@ function upsertSession({ cwd, tmuxSession, status, sessionId, sessionType }: {
 
   // Preserve existing sessionType if a new one isn't explicitly provided
   const resolvedSessionType = sessionType ?? (existingToken ? map[existingToken].sessionType : undefined);
+  // Preserve existing rateLimit if a new one isn't provided
+  const resolvedRateLimit = rateLimit ?? (existingToken ? map[existingToken].rateLimit : undefined);
 
   map[token] = {
     type: resolvedSessionType || 'tmux',
@@ -169,11 +173,61 @@ function upsertSession({ cwd, tmuxSession, status, sessionId, sessionType }: {
     sessionId: sessionId || (existingToken ? map[existingToken].sessionId : null) || null,
     tmuxSession: tmuxSession || `claude-${workspace}`,
     description: `${status} - ${workspace}`,
+    ...(resolvedRateLimit ? { rateLimit: resolvedRateLimit } : {}),
   };
 
   writeSessionMap(map);
   recordProjectUsage(workspace!, cwd, sessionId ?? undefined);
   return { token, workspace };
+}
+
+/**
+ * Update rate limit info for a session by workspace name.
+ * Returns true if session was found and updated.
+ */
+function updateSessionRateLimit(workspace: string, rateLimit: RateLimitInfo): boolean {
+  const map = readSessionMap();
+  for (const [token, session] of Object.entries(map)) {
+    if (isExpired(session)) continue;
+    const sessionWorkspace = extractWorkspaceName(session.cwd);
+    if (sessionWorkspace === workspace) {
+      map[token].rateLimit = rateLimit;
+      writeSessionMap(map);
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Get rate limit info for a session by workspace name.
+ */
+function getSessionRateLimit(workspace: string): RateLimitInfo | undefined {
+  const map = readSessionMap();
+  for (const session of Object.values(map)) {
+    if (isExpired(session)) continue;
+    const sessionWorkspace = extractWorkspaceName(session.cwd);
+    if (sessionWorkspace === workspace) {
+      return session.rateLimit;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Find the newest non-expired session with the given tmuxSession name.
+ * Used by callback handlers that only have the session name from pending files.
+ */
+function findSessionByTmuxName(tmuxName: string): SessionEntry | undefined {
+  const map = readSessionMap();
+  let best: SessionEntry | undefined;
+  for (const session of Object.values(map)) {
+    if (isExpired(session)) continue;
+    if (session.tmuxSession === tmuxName) {
+      if (!best || session.createdAt > best.createdAt) best = session;
+    }
+  }
+  return best;
 }
 
 /** Remove expired sessions from the map. */
@@ -543,6 +597,7 @@ export {
   readSessionMap,
   writeSessionMap,
   findSessionByWorkspace,
+  findSessionByTmuxName,
   resolveWorkspace,
   listActiveSessions,
   upsertSession,
@@ -556,5 +611,7 @@ export {
   getRecentProjects,
   getResumeableProjects,
   getClaudeSessionsForProject,
+  updateSessionRateLimit,
+  getSessionRateLimit,
   SESSION_MAP_PATH,
 };

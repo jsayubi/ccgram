@@ -23,6 +23,8 @@ interface HookDefinition {
     timeout: number;
     args?: string;
     matcher?: string;
+    /** Claude Code v2.1.85+ - conditional execution (jq expression) */
+    if?: string;
 }
 
 interface SelectOption {
@@ -32,6 +34,7 @@ interface SelectOption {
 
 interface HookEntry {
     matcher?: string;
+    if?: string;
     hooks: { type: string; command: string; timeout: number }[];
 }
 
@@ -47,14 +50,24 @@ let defaultSessionMap: string = path.join(PROJECT_ROOT, 'src', 'data', 'session-
 
 // Hook definitions for Claude Code integration
 const HOOK_DEFINITIONS: HookDefinition[] = [
+    // Core hooks
     { event: 'PermissionRequest',  script: 'permission-hook.js',        timeout: 120 },
-    { event: 'PreToolUse',         script: 'question-notify.js',         timeout: 5,  matcher: 'AskUserQuestion' },
+    { event: 'PreToolUse',         script: 'question-notify.js',         timeout: 120, matcher: 'AskUserQuestion' },
     { event: 'Stop',               script: 'enhanced-hook-notify.js',    args: 'completed',     timeout: 5 },
     { event: 'Notification',       script: 'enhanced-hook-notify.js',    args: 'waiting',       timeout: 5, matcher: 'permission_prompt' },
     { event: 'UserPromptSubmit',   script: 'user-prompt-hook.js',        timeout: 2 },
     { event: 'SessionStart',       script: 'enhanced-hook-notify.js',    args: 'session-start', timeout: 5 },
     { event: 'SessionEnd',         script: 'enhanced-hook-notify.js',    args: 'session-end',   timeout: 5 },
     { event: 'SubagentStop',       script: 'enhanced-hook-notify.js',    args: 'subagent-done', timeout: 5 },
+    // Phase 2: New hook events (Claude Code v2.1.76+)
+    { event: 'PermissionDenied',   script: 'permission-denied-notify.js', timeout: 30 },
+    { event: 'StopFailure',        script: 'enhanced-hook-notify.js',    args: 'stop-failure',        timeout: 5 },
+    { event: 'PostCompact',        script: 'enhanced-hook-notify.js',    args: 'post-compact',        timeout: 5 },
+    { event: 'PreCompact',         script: 'pre-compact-notify.js',      timeout: 30 },
+    { event: 'Elicitation',        script: 'elicitation-notify.js',      timeout: 120 },
+    { event: 'TaskCreated',        script: 'enhanced-hook-notify.js',    args: 'task-created',        timeout: 5 },
+    { event: 'CwdChanged',         script: 'enhanced-hook-notify.js',    args: 'cwd-changed',         timeout: 5 },
+    { event: 'InstructionsLoaded', script: 'enhanced-hook-notify.js',    args: 'instructions-loaded', timeout: 5 },
 ];
 
 // ANSI color codes
@@ -210,8 +223,8 @@ function checkTmux(): boolean {
     } catch {
         const isMac: boolean = process.platform === 'darwin';
         console.log('  ' + warning('tmux not found.'));
-        console.log(dim('     Without tmux, /new starts headless PTY sessions (Telegram-only control).'));
-        console.log(dim(`     For full terminal+Telegram experience: ${isMac ? 'brew install tmux' : 'sudo apt install tmux'}`));
+        console.log(dim('     If you use Ghostty, ccgram will auto-detect it as the injection backend.'));
+        console.log(dim(`     For tmux: ${isMac ? 'brew install tmux' : 'sudo apt install tmux'}`));
         return false;
     }
 }
@@ -307,6 +320,7 @@ function buildHooksJSON(): Record<string, HookEntry[]> {
     for (const def of HOOK_DEFINITIONS) {
         const entry: HookEntry = {} as HookEntry;
         if (def.matcher) entry.matcher = def.matcher;
+        if (def.if) entry.if = def.if;
         entry.hooks = [{ type: 'command', command: makeHookCommand(def), timeout: def.timeout }];
 
         if (!hooks[def.event]) hooks[def.event] = [];
@@ -351,6 +365,7 @@ function ensureHooksFile(): EnsureHooksResult {
         if (!exists) {
             const entry: HookEntry = {} as HookEntry;
             if (def.matcher) entry.matcher = def.matcher;
+            if (def.if) entry.if = def.if;
             entry.hooks = [{ type: 'command', command, timeout: def.timeout }];
             eventHooks.push(entry);
         }
@@ -609,7 +624,7 @@ async function main(): Promise<void> {
     let webhookUrl = existingEnv.TELEGRAM_WEBHOOK_URL || '';
     let webhookPort = existingEnv.TELEGRAM_WEBHOOK_PORT || '3001';
     let forceIPv4 = existingEnv.TELEGRAM_FORCE_IPV4 === 'true';
-    let injectionMode = existingEnv.INJECTION_MODE || 'tmux';
+    let injectionMode = existingEnv.INJECTION_MODE || '';
     let logLevel = existingEnv.LOG_LEVEL || 'info';
     let sessionMapPath = existingEnv.SESSION_MAP_PATH || defaultSessionMap;
     let activeThreshold = existingEnv.ACTIVE_THRESHOLD_SECONDS || '300';
@@ -627,10 +642,11 @@ async function main(): Promise<void> {
             webhookPort = await ask('Webhook port', webhookPort);
         }
         forceIPv4 = await askYesNo('Force IPv4 for Telegram API?', forceIPv4);
-        injectionMode = (await ask('Injection mode (tmux or pty)', injectionMode)).toLowerCase();
-        if (!['tmux', 'pty'].includes(injectionMode)) {
-            console.log('  ' + warning('Invalid injection mode, defaulting to tmux'));
-            injectionMode = 'tmux';
+        injectionMode = (await ask('Injection mode (auto, tmux, ghostty, pty)', injectionMode || 'auto')).toLowerCase();
+        if (injectionMode === 'auto') injectionMode = '';
+        if (injectionMode && !['tmux', 'ghostty', 'pty'].includes(injectionMode)) {
+            console.log('  ' + warning('Invalid injection mode, using auto-detect'));
+            injectionMode = '';
         }
         logLevel = await ask('Log level (debug, info, warn, error)', logLevel);
         sessionMapPath = await ask('Session map path', sessionMapPath);
@@ -651,7 +667,7 @@ async function main(): Promise<void> {
     if (webhookUrl) envValues.TELEGRAM_WEBHOOK_URL = webhookUrl;
     if (webhookUrl && webhookPort) envValues.TELEGRAM_WEBHOOK_PORT = webhookPort;
     if (forceIPv4) envValues.TELEGRAM_FORCE_IPV4 = 'true';
-    if (advancedConfigured || existingEnv.INJECTION_MODE) envValues.INJECTION_MODE = injectionMode;
+    if (injectionMode) envValues.INJECTION_MODE = injectionMode;
     if (advancedConfigured || existingEnv.SESSION_MAP_PATH) envValues.SESSION_MAP_PATH = sessionMapPath;
     if (logLevel !== 'info' || existingEnv.LOG_LEVEL) envValues.LOG_LEVEL = logLevel;
     if (activeThreshold !== '300' || existingEnv.ACTIVE_THRESHOLD_SECONDS) envValues.ACTIVE_THRESHOLD_SECONDS = activeThreshold;
@@ -700,7 +716,7 @@ async function main(): Promise<void> {
     console.log();
     console.log('  ' + bold('Next steps:'));
     console.log('    1. Open Telegram and message your bot');
-    console.log('    2. Start Claude Code in a tmux session');
+    console.log('    2. Start Claude Code — in tmux, Ghostty, or any terminal');
     console.log();
 }
 

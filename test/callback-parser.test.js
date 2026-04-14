@@ -105,4 +105,38 @@ describe('parseCallbackData', () => {
       expect(parseCallbackData('rc:assistant:abc')).toBeNull();
     });
   });
+
+  describe('phase 2 callbacks', () => {
+    it('parses perm-denied:id:retry', () => {
+      expect(parseCallbackData('perm-denied:abc123:retry')).toEqual({
+        type: 'perm-denied',
+        promptId: 'abc123',
+        action: 'retry',
+      });
+    });
+
+    it('parses perm-denied:id:dismiss', () => {
+      expect(parseCallbackData('perm-denied:abc123:dismiss')).toEqual({
+        type: 'perm-denied',
+        promptId: 'abc123',
+        action: 'dismiss',
+      });
+    });
+
+    it('parses pre-compact:id:proceed', () => {
+      expect(parseCallbackData('pre-compact:abc123:proceed')).toEqual({
+        type: 'pre-compact',
+        promptId: 'abc123',
+        action: 'proceed',
+      });
+    });
+
+    it('parses pre-compact:id:block', () => {
+      expect(parseCallbackData('pre-compact:abc123:block')).toEqual({
+        type: 'pre-compact',
+        promptId: 'abc123',
+        action: 'block',
+      });
+    });
+  });
 });

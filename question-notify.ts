@@ -3,15 +3,16 @@
 /**
  * Question Notify — Called by Claude Code's PreToolUse hook (matcher: AskUserQuestion).
  *
- * Non-blocking: sends a Telegram message with option buttons, then returns
- * without stdout output. AskUserQuestion must be in the permissions allow
- * list (settings.json) so Claude Code handles permission automatically.
- * The bot callback handler later injects the selected option number via tmux.
+ * BLOCKING mode (v2.0): Sends Telegram notification with option buttons, polls for
+ * user selection, then outputs `updatedInput` via stdout so Claude Code receives
+ * the answer directly — no keystroke injection needed!
+ *
+ * This works with ANY terminal (tmux, Ghostty, bare terminal).
  *
  * Stdin JSON: { tool_name, tool_input, cwd, session_id, hook_event_name }
  * tool_input.questions: [{ question, header, options: [{ label, description }], multiSelect }]
  *
- * Stdout: (none — intentionally omitted so Claude Code shows the interactive question UI)
+ * Stdout: { hookSpecificOutput: { updatedInput: { questions: [...] }, permissionDecision: "allow" } }
  */
 
 import path from 'path';
@@ -21,24 +22,33 @@ require('dotenv').config({ path: path.join(PROJECT_ROOT, '.env'), quiet: true })
 import fs from 'fs';
 import https from 'https';
 import { extractWorkspaceName, trackNotificationMessage } from './workspace-router';
-import { generatePromptId, writePending } from './prompt-bridge';
+import { generatePromptId, writePending, readResponse, cleanPrompt, PROMPTS_DIR } from './prompt-bridge';
 import { isUserActiveAtTerminal } from './src/utils/active-check';
 import type { AskUserQuestionItem, InlineKeyboardMarkup, InlineKeyboardButton, TelegramMessage } from './src/types';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
+// Polling configuration (same as permission-hook.ts)
+const POLL_INTERVAL_MS = 500;
+const POLL_TIMEOUT_MS = 90000; // 90 seconds
+
+/** Output format for Claude Code's PreToolUse hook with updatedInput */
+interface QuestionHookOutput {
+  hookSpecificOutput: {
+    updatedInput: {
+      questions: Array<{
+        question: string;
+        answer: string | string[];
+      }>;
+    };
+    permissionDecision: 'allow';
+  };
+}
+
 // ── Main ────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  // NOTE: We intentionally do NOT output permissionDecision to stdout.
-  // If we output "allow" here, Claude Code bypasses the interactive
-  // question UI entirely. This hook only sends the Telegram notification
-  // for remote answering. Permission is handled by the PermissionRequest hook.
-  //
-  // We delay 2s so the permission notification (from PermissionRequest hook)
-  // appears first in Telegram. The user must click Allow before answering.
-
   const raw = await readStdin();
 
   // Skip Telegram notification if user is at terminal AND this wasn't Telegram-injected.
@@ -46,11 +56,10 @@ async function main(): Promise<void> {
   const typingActivePath = path.join(PROJECT_ROOT, 'src/data', 'typing-active');
   const isTelegramInjected = fs.existsSync(typingActivePath);
   if (!isTelegramInjected && isUserActiveAtTerminal()) {
+    // User is at terminal — let Claude Code show its native UI
     return;
   }
 
-  // Delay so permission notification appears first in Telegram
-  await new Promise<void>(r => setTimeout(r, 2000));
   let payload: Record<string, unknown>;
   try {
     payload = JSON.parse(raw);
@@ -68,10 +77,11 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Detect session name for keystroke injection (tmux preferred, CWD-derived fallback)
+  // Detect session name (for session map, even though we don't inject keystrokes)
   const tmuxSession = detectSessionName(cwd);
 
-  const totalQuestions = questions.length;
+  // Collect answers for all questions
+  const answeredQuestions: Array<{ question: string; answer: string | string[] }> = [];
 
   // Process each question (usually just one)
   for (let qi = 0; qi < questions.length; qi++) {
@@ -79,13 +89,14 @@ async function main(): Promise<void> {
     const promptId = generatePromptId(); // Unique ID per question
     const questionText = q.question || 'Question';
     const options = q.options || [];
-    const isLast = qi === totalQuestions - 1;
+    const isLast = qi === questions.length - 1;
+    const isMultiSelect = q.multiSelect || false;
 
     let messageText = `\u2753 *Question* — ${escapeMarkdown(workspace)}\n\n${escapeMarkdown(questionText)}`;
 
     if (options.length > 0) {
       // Build inline keyboard with numbered options
-      const prefix = q.multiSelect ? '\u2610 ' : '';
+      const prefix = isMultiSelect ? '\u2610 ' : '';
       const buttons: InlineKeyboardButton[] = options.map((opt, idx) => ({
         text: `${prefix}${idx + 1}. ${opt.label}`,
         callback_data: `opt:${promptId}:${idx + 1}`,
@@ -97,7 +108,7 @@ async function main(): Promise<void> {
         keyboard.push(buttons.slice(i, i + 2));
       }
       // Add Submit button for multi-select questions
-      if (q.multiSelect) {
+      if (isMultiSelect) {
         keyboard.push([{ text: '\u2705 Submit', callback_data: `opt-submit:${promptId}` }]);
       }
 
@@ -107,15 +118,15 @@ async function main(): Promise<void> {
       );
       messageText += '\n\n' + optionLines.join('\n');
 
-      // Write pending file so bot callback handler knows the tmux session
+      // Write pending file so bot callback handler can write response
       writePending(promptId, {
         type: 'question',
         workspace,
         tmuxSession,
         questionText,
         options: options.map(o => o.label),
-        multiSelect: q.multiSelect || false,
-        selectedOptions: q.multiSelect ? options.map(() => false) : undefined,
+        multiSelect: isMultiSelect,
+        selectedOptions: isMultiSelect ? options.map(() => false) : undefined,
         isLast,
       });
 
@@ -127,7 +138,31 @@ async function main(): Promise<void> {
         }
       } catch (err: unknown) {
         process.stderr.write(`[question-notify] Telegram send failed: ${(err as Error).message}\n`);
+        cleanPrompt(promptId);
+        return; // Can't notify — exit without output
       }
+
+      // Poll for response
+      const response = await pollForResponse(promptId);
+
+      if (response) {
+        // Extract answer from response
+        if (isMultiSelect) {
+          // Multi-select: response.selectedLabels is string[]
+          const selectedLabels = (response.selectedLabels as string[]) || [];
+          answeredQuestions.push({ question: questionText, answer: selectedLabels });
+        } else {
+          // Single-select: response.selectedLabel is string
+          const selectedLabel = (response.selectedLabel as string) || '';
+          answeredQuestions.push({ question: questionText, answer: selectedLabel });
+        }
+      } else {
+        // Timed out — exit without output (Claude Code will show native UI on retry)
+        cleanPrompt(promptId);
+        return;
+      }
+
+      cleanPrompt(promptId);
     } else {
       // No options — free text question
       messageText += `\n\n_Reply to this message with your answer_`;
@@ -137,6 +172,7 @@ async function main(): Promise<void> {
         workspace,
         tmuxSession,
         questionText,
+        isLast,
       });
 
       try {
@@ -146,9 +182,68 @@ async function main(): Promise<void> {
         }
       } catch (err: unknown) {
         process.stderr.write(`[question-notify] Telegram send failed: ${(err as Error).message}\n`);
+        cleanPrompt(promptId);
+        return;
       }
+
+      // Poll for response
+      const response = await pollForResponse(promptId);
+
+      if (response) {
+        const textAnswer = (response.textAnswer as string) || '';
+        answeredQuestions.push({ question: questionText, answer: textAnswer });
+      } else {
+        cleanPrompt(promptId);
+        return;
+      }
+
+      cleanPrompt(promptId);
     }
   }
+
+  // Output updatedInput to stdout so Claude Code receives the answers directly
+  if (answeredQuestions.length > 0) {
+    const output: QuestionHookOutput = {
+      hookSpecificOutput: {
+        updatedInput: {
+          questions: answeredQuestions,
+        },
+        permissionDecision: 'allow',
+      },
+    };
+    process.stdout.write(JSON.stringify(output) + '\n');
+  }
+}
+
+// ── Polling ─────────────────────────────────────────────────────
+
+function pollForResponse(promptId: string): Promise<Record<string, unknown> | null> {
+  return new Promise((resolve) => {
+    const responseFile = path.join(PROMPTS_DIR, `response-${promptId}.json`);
+    const startTime = Date.now();
+
+    const interval = setInterval(() => {
+      // Check timeout
+      if (Date.now() - startTime > POLL_TIMEOUT_MS) {
+        clearInterval(interval);
+        process.stderr.write(`[question-notify] Timed out waiting for response\n`);
+        resolve(null);
+        return;
+      }
+
+      // Check for response file
+      try {
+        if (fs.existsSync(responseFile)) {
+          const raw = fs.readFileSync(responseFile, 'utf8');
+          const data = JSON.parse(raw);
+          clearInterval(interval);
+          resolve(data);
+        }
+      } catch {
+        // File not ready yet or parse error — keep polling
+      }
+    }, POLL_INTERVAL_MS);
+  });
 }
 
 // ── Telegram ────────────────────────────────────────────────────
@@ -277,7 +372,12 @@ function detectSessionName(cwd: string): string | null {
       return execSync('tmux display-message -p "#S"', { encoding: 'utf8' }).trim();
     } catch {}
   }
-  // 2. Derive from CWD — apply the same sanitization /new uses for session names
+  // 2. Ghostty — derive from CWD (explicit for clarity, same result as fallback)
+  if (process.env.TERM_PROGRAM === 'ghostty') {
+    const raw = extractWorkspaceName(cwd);
+    return raw ? raw.replace(/[.:\s]/g, '-') : null;
+  }
+  // 3. Derive from CWD — apply the same sanitization /new uses for session names
   // (dots, colons, spaces → hyphens) so the name matches the PTY handle key
   const raw = extractWorkspaceName(cwd);
   if (!raw) return null;

@@ -64,14 +64,22 @@ CCGram integrates with [Claude Code hooks](https://docs.anthropic.com/en/docs/cl
 
 | Hook | Event | What it does |
 |------|-------|-------------|
-| `permission-hook.js` | `PermissionRequest` | Sends a permission dialog with Allow / Deny / Always buttons. Blocks Claude until you respond. |
-| `question-notify.js` | `PreToolUse` (AskUserQuestion) | Sends Claude's question with selectable options. Your tap injects the selection via tmux/PTY. |
+| `permission-hook.js` | `PermissionRequest` | Sends a permission dialog with Allow / Deny / Always / Defer buttons. Blocks Claude until you respond. |
+| `question-notify.js` | `PreToolUse` (AskUserQuestion) | Sends Claude's question with selectable options. Returns answer directly via `updatedInput` — works with any terminal. |
 | `enhanced-hook-notify.js completed` | `Stop` | Notifies you when Claude finishes a task, including the last response text. |
 | `enhanced-hook-notify.js waiting` | `Notification` | Notifies you when Claude is waiting for input. |
 | `user-prompt-hook.js` | `UserPromptSubmit` | Tracks terminal activity so notifications are suppressed when you're actively working. |
 | `enhanced-hook-notify.js session-start` | `SessionStart` | Notifies you when a new Claude session starts. |
-| `enhanced-hook-notify.js session-end` | `SessionEnd` | Notifies you when a Claude session ends, with the final response. |
+| `enhanced-hook-notify.js session-end` | `SessionEnd` | Notifies you when a Claude session ends. |
 | `enhanced-hook-notify.js subagent-done` | `SubagentStop` | Notifies you when a subagent task completes. |
+| `permission-denied-notify.js` | `PermissionDenied` | Notifies when auto mode blocks a tool. Retry button lets you override. |
+| `enhanced-hook-notify.js stop-failure` | `StopFailure` | Notifies you on API errors (rate limits, network issues). |
+| `enhanced-hook-notify.js post-compact` | `PostCompact` | Notifies when context compaction completes, with token savings. |
+| `pre-compact-notify.js` | `PreCompact` | Warns before compaction starts. Block button lets you preserve context. |
+| `elicitation-notify.js` | `Elicitation` | Forwards MCP server input requests to Telegram. Reply with your answer. |
+| `enhanced-hook-notify.js task-created` | `TaskCreated` | Notifies when Claude creates a new task. |
+| `enhanced-hook-notify.js cwd-changed` | `CwdChanged` | Notifies when Claude changes working directory. |
+| `enhanced-hook-notify.js instructions-loaded` | `InstructionsLoaded` | Notifies when CLAUDE.md or rules are loaded. |
 
 > **Smart suppression** — all notifications (including permissions) are automatically silenced when you've sent a message to Claude within the last 5 minutes. The moment you step away, Telegram takes over. Telegram-injected commands always get their response back to Telegram regardless.
 
@@ -91,11 +99,11 @@ Claude requests permission
 
 ```
 Claude asks a question (AskUserQuestion)
-  → Claude shows question UI in terminal
   → question-notify sends options to Telegram
   → you tap an option
-  → bot injects arrow keys + Enter via tmux or PTY
-  → Claude's question UI captures the keystrokes
+  → bot writes response file with your selection
+  → hook returns answer via updatedInput to Claude
+  → Claude receives answer directly (works with any terminal!)
 ```
 
 ## Bot Commands
@@ -114,9 +122,12 @@ Claude asks a question (AskUserQuestion)
 | Command | Description |
 |---------|-------------|
 | `/<workspace> <command>` | Send a command to a specific Claude session |
-| `/status [workspace]` | Show the last 20 lines of tmux pane output |
+| `/status [workspace]` | Show the last 20 lines of output (includes rate limit info if available) |
 | `/stop [workspace]` | Send Ctrl+C to interrupt the running prompt |
 | `/compact [workspace]` | Run `/compact` and wait for it to complete |
+| `/effort [workspace] low\|medium\|high` | Set Claude's thinking effort level |
+| `/model [workspace] <model>` | Switch Claude model (sonnet, opus, haiku) |
+| `/link <prompt>` | Generate a deep link to open Claude Code with your prompt |
 
 ### Project launcher
 

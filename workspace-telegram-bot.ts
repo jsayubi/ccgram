@@ -45,6 +45,8 @@ import {
   getRecentProjects,
   getResumeableProjects,
   getClaudeSessionsForProject,
+  findSessionByTmuxName,
+  getSessionRateLimit,
 } from './workspace-router';
 import {
   writeResponse,
@@ -55,6 +57,8 @@ import {
 } from './prompt-bridge';
 import { parseCallbackData } from './src/utils/callback-parser';
 import { ptySessionManager } from './src/utils/pty-session-manager';
+import { ghosttySessionManager } from './src/utils/ghostty-session-manager';
+import { generateDeepLink, canGenerateDeepLink } from './src/utils/deep-link';
 import Logger from './src/core/logger';
 import type {
   TelegramMessage,
@@ -73,6 +77,19 @@ const INJECTION_MODE: string = process.env.INJECTION_MODE || 'tmux';
 const TMUX_AVAILABLE: boolean = (() => {
   try { execSync('tmux -V', { stdio: 'ignore' }); return true; } catch { return false; }
 })();
+
+/**
+ * Determine the active injection backend.
+ * Respects INJECTION_MODE env var, falls back in order: ghostty → pty → tmux.
+ */
+function getEffectiveMode(): 'tmux' | 'ghostty' | 'pty' {
+  if (INJECTION_MODE === 'ghostty' && ghosttySessionManager.isAvailable()) return 'ghostty';
+  if (INJECTION_MODE === 'pty' && ptySessionManager.isAvailable()) return 'pty';
+  if (TMUX_AVAILABLE && INJECTION_MODE !== 'pty' && INJECTION_MODE !== 'ghostty') return 'tmux';
+  if (ghosttySessionManager.isAvailable()) return 'ghostty';
+  if (ptySessionManager.isAvailable()) return 'pty';
+  return 'tmux';
+}
 
 const BOT_TOKEN: string | undefined = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT_ID: string | undefined = process.env.TELEGRAM_CHAT_ID;
@@ -186,11 +203,14 @@ async function registerBotCommands(): Promise<void> {
   const commands = [
     { command: 'new',      description: 'Start Claude in a project directory' },
     { command: 'resume',   description: 'Resume a past Claude conversation' },
+    { command: 'link',     description: 'Generate deep link to open Claude' },
     { command: 'sessions', description: 'List all active Claude sessions' },
     { command: 'use',      description: 'Set or show default workspace' },
     { command: 'status',   description: 'Show current session output' },
     { command: 'stop',     description: 'Interrupt the running prompt' },
     { command: 'compact',  description: 'Compact context in the current session' },
+    { command: 'effort',   description: 'Set thinking effort (low/medium/high)' },
+    { command: 'model',    description: 'Switch Claude model (sonnet/opus/haiku)' },
     { command: 'help',     description: 'Show available commands' },
   ];
   try {
@@ -224,6 +244,18 @@ function editMessageText(chatId: string, messageId: number, text: string, replyM
 
 // ── Command handlers ────────────────────────────────────────────
 
+/**
+ * Helper to resolve workspace from arg or default.
+ * Returns the resolved result with workspace and session.
+ */
+function resolveDefaultWorkspace(): ResolveResult {
+  const defaultWs = getDefaultWorkspace();
+  if (!defaultWs) {
+    return { type: 'none' };
+  }
+  return resolveWorkspace(defaultWs);
+}
+
 async function handleHelp(): Promise<void> {
   const defaultWs: string | null = getDefaultWorkspace();
   const msg: string = [
@@ -236,6 +268,9 @@ async function handleHelp(): Promise<void> {
     '`/compact [workspace]` — Compact context in workspace',
     '`/new [project]` — Start Claude in a project (shows recent if no arg)',
     '`/resume [project]` — Resume a past Claude conversation',
+    '`/link <prompt>` — Generate deep link to open Claude',
+    '`/effort [workspace] low|medium|high` — Set thinking effort',
+    '`/model [workspace] <model>` — Switch Claude model',
     '`/sessions` — List active sessions',
     '`/status [workspace]` — Show tmux output',
     '`/stop [workspace]` — Interrupt running prompt',
@@ -248,6 +283,141 @@ async function handleHelp(): Promise<void> {
   ].join('\n');
 
   await sendMessage(msg);
+}
+
+async function handleLink(prompt: string): Promise<void> {
+  if (!prompt) {
+    await sendMessage('Usage: `/link <prompt>`\n\nGenerates a clickable link that opens Claude Code with your prompt.');
+    return;
+  }
+
+  if (!canGenerateDeepLink(prompt)) {
+    await sendMessage('\u26a0\ufe0f Prompt too long for deep link (max ~4500 characters).');
+    return;
+  }
+
+  const deepLink = generateDeepLink(prompt);
+  if (!deepLink) {
+    await sendMessage('\u26a0\ufe0f Failed to generate deep link.');
+    return;
+  }
+
+  // Send the deep link as a clickable button
+  const keyboard = {
+    inline_keyboard: [[
+      { text: '\ud83d\udcbb Open in Claude Code', url: deepLink },
+    ]],
+  };
+
+  await telegramAPI('sendMessage', {
+    chat_id: CHAT_ID,
+    text: `*Deep Link Generated*\n\n_Tap the button to open Claude Code with:_\n\`${escapeMarkdown(prompt.slice(0, 100))}${prompt.length > 100 ? '...' : ''}\``,
+    parse_mode: 'Markdown',
+    reply_markup: keyboard,
+  });
+}
+
+/**
+ * /effort [workspace] low|medium|high — Set Claude's thinking effort level
+ */
+async function handleEffort(args: string): Promise<void> {
+  const validLevels = ['low', 'medium', 'high'];
+
+  if (!args) {
+    await sendMessage('Usage: `/effort [workspace] low|medium|high`\n\nSet Claude\'s thinking effort level.');
+    return;
+  }
+
+  const parts = args.split(/\s+/);
+  let workspaceArg: string | null = null;
+  let level: string;
+
+  // Check if first arg is a valid level or a workspace
+  if (validLevels.includes(parts[0].toLowerCase())) {
+    level = parts[0].toLowerCase();
+  } else if (parts.length >= 2 && validLevels.includes(parts[1].toLowerCase())) {
+    workspaceArg = parts[0];
+    level = parts[1].toLowerCase();
+  } else {
+    await sendMessage(`Invalid effort level. Use: \`low\`, \`medium\`, or \`high\``);
+    return;
+  }
+
+  // Resolve workspace
+  const resolved = workspaceArg ? resolveWorkspace(workspaceArg) : resolveDefaultWorkspace();
+  if (resolved.type === 'none') {
+    await sendMessage(workspaceArg
+      ? `No session found for workspace \`${escapeMarkdown(workspaceArg)}\``
+      : 'No default workspace set. Use `/use <workspace>` first.');
+    return;
+  }
+  if (resolved.type === 'ambiguous') {
+    const names = resolved.matches.map(m => `\`${escapeMarkdown(m.workspace)}\``).join(', ');
+    await sendMessage(`Multiple matches: ${names}. Be more specific.`);
+    return;
+  }
+
+  const session = resolved.match!.session;
+  const workspace = resolved.workspace;
+  const slashCommand = `/effort ${level}`;
+
+  const injected = await injectAndRespond(session, slashCommand, workspace);
+  if (injected) {
+    startTypingIndicator();
+    await sendMessage(`\u2699\ufe0f Effort set to *${level}* in *${escapeMarkdown(workspace)}*`);
+  }
+}
+
+/**
+ * /model [workspace] <model> — Switch Claude model
+ */
+async function handleModel(args: string): Promise<void> {
+  if (!args) {
+    await sendMessage('Usage: `/model [workspace] <model>`\n\nSwitch Claude model (e.g., `sonnet`, `opus`, `haiku`).');
+    return;
+  }
+
+  const parts = args.split(/\s+/);
+  let workspaceArg: string | null = null;
+  let model: string;
+
+  // If 2+ parts, first might be workspace
+  if (parts.length >= 2) {
+    // Try to resolve first part as workspace
+    const maybeWs = resolveWorkspace(parts[0]);
+    if (maybeWs.type === 'exact' || maybeWs.type === 'prefix') {
+      workspaceArg = parts[0];
+      model = parts.slice(1).join(' ');
+    } else {
+      model = parts.join(' ');
+    }
+  } else {
+    model = parts[0];
+  }
+
+  // Resolve workspace
+  const resolved = workspaceArg ? resolveWorkspace(workspaceArg) : resolveDefaultWorkspace();
+  if (resolved.type === 'none') {
+    await sendMessage(workspaceArg
+      ? `No session found for workspace \`${escapeMarkdown(workspaceArg)}\``
+      : 'No default workspace set. Use `/use <workspace>` first.');
+    return;
+  }
+  if (resolved.type === 'ambiguous') {
+    const names = resolved.matches.map(m => `\`${escapeMarkdown(m.workspace)}\``).join(', ');
+    await sendMessage(`Multiple matches: ${names}. Be more specific.`);
+    return;
+  }
+
+  const session = resolved.match!.session;
+  const workspace = resolved.workspace;
+  const slashCommand = `/model ${model}`;
+
+  const injected = await injectAndRespond(session, slashCommand, workspace);
+  if (injected) {
+    startTypingIndicator();
+    await sendMessage(`\ud83e\udde0 Model switched to *${escapeMarkdown(model)}* in *${escapeMarkdown(workspace)}*`);
+  }
 }
 
 async function handleSessions(): Promise<void> {
@@ -305,10 +475,30 @@ async function handleStatus(workspaceArg: string | null): Promise<void> {
   const tmuxName: string = match.session.tmuxSession;
 
   try {
-    const output: string = await sessionCaptureOutput(tmuxName);
+    const output: string = await sessionCaptureOutput(tmuxName, match.session);
     // Trim and take last 20 lines to avoid message length limits
     const trimmed: string = output.trim().split('\n').slice(-20).join('\n');
-    const htmlMsg: string = `<b>${escapeHtml(resolvedName)}</b> session output:\n<pre>${escapeHtml(trimmed)}</pre>`;
+
+    // Build rate limit info if available
+    let rateLimitInfo = '';
+    const rateLimit = getSessionRateLimit(resolvedName);
+    if (rateLimit && rateLimit.remaining !== undefined) {
+      const pct = rateLimit.limit ? Math.round((rateLimit.remaining / rateLimit.limit) * 100) : null;
+      const pctStr = pct !== null ? ` (${pct}%)` : '';
+      let resetStr = '';
+      if (rateLimit.resetsAt) {
+        const resetDate = new Date(rateLimit.resetsAt * 1000);
+        const now = new Date();
+        const diffMs = resetDate.getTime() - now.getTime();
+        if (diffMs > 0) {
+          const mins = Math.ceil(diffMs / 60000);
+          resetStr = mins > 60 ? ` \u2022 resets in ${Math.round(mins / 60)}h` : ` \u2022 resets in ${mins}m`;
+        }
+      }
+      rateLimitInfo = `\n\n<i>\u{1F4CA} Rate limit: ${rateLimit.remaining}/${rateLimit.limit || '?'}${pctStr}${resetStr}</i>`;
+    }
+
+    const htmlMsg: string = `<b>${escapeHtml(resolvedName)}</b> session output:\n<pre>${escapeHtml(trimmed)}</pre>${rateLimitInfo}`;
     try {
       await sendHtmlMessage(htmlMsg);
     } catch {
@@ -350,13 +540,13 @@ async function handleStop(workspaceArg: string | null): Promise<void> {
   const resolvedName: string = resolved.workspace;
   const tmuxName: string = resolved.match.session.tmuxSession;
 
-  if (!await sessionExists(tmuxName)) {
+  if (!await sessionExists(tmuxName, resolved.match.session)) {
     await sendMessage(`Session \`${tmuxName}\` not found.`);
     return;
   }
 
   try {
-    await sessionInterrupt(tmuxName);
+    await sessionInterrupt(tmuxName, resolved.match.session);
     await sendMessage(`\u26d4 Sent interrupt to *${escapeMarkdown(resolvedName)}*`);
   } catch (err: unknown) {
     await sendMessage(`\u274c Failed to interrupt: ${(err as Error).message}`);
@@ -463,6 +653,7 @@ async function handleCompact(workspaceArg: string | null): Promise<void> {
   }
 
   const tmuxName: string = resolved.match.session.tmuxSession;
+  const compactSession = resolved.match.session;
 
   // Inject /compact into tmux
   const injected: boolean = await injectAndRespond(resolved.match.session, '/compact', resolved.workspace);
@@ -478,7 +669,7 @@ async function handleCompact(workspaceArg: string | null): Promise<void> {
   for (let i = 0; i < 5; i++) {
     await sleep(2000);
     try {
-      const output: string = await sessionCaptureOutput(tmuxName);
+      const output: string = await sessionCaptureOutput(tmuxName, compactSession);
       if (output.includes('Compacting')) {
         started = true;
         break;
@@ -491,7 +682,7 @@ async function handleCompact(workspaceArg: string | null): Promise<void> {
   if (!started) {
     // Command may have finished very quickly or failed to start
     try {
-      const output: string = await sessionCaptureOutput(tmuxName);
+      const output: string = await sessionCaptureOutput(tmuxName, compactSession);
       if (output.includes('Compacted')) {
         const lines: string = output.trim().split('\n').slice(-10).join('\n');
         await sendMessage(`\u2705 *${escapeMarkdown(resolved.workspace)}* compact done:\n\`\`\`\n${lines}\n\`\`\``);
@@ -506,7 +697,7 @@ async function handleCompact(workspaceArg: string | null): Promise<void> {
   for (let i = 0; i < 30; i++) {
     await sleep(2000);
     try {
-      const output: string = await sessionCaptureOutput(tmuxName);
+      const output: string = await sessionCaptureOutput(tmuxName, compactSession);
       if (!output.includes('Compacting')) {
         const lines: string = output.trim().split('\n').slice(-10).join('\n');
         await sendMessage(`\u2705 *${escapeMarkdown(resolved.workspace)}* compact done:\n\`\`\`\n${lines}\n\`\`\``);
@@ -519,7 +710,7 @@ async function handleCompact(workspaceArg: string | null): Promise<void> {
 
   // Timeout — show current session state
   try {
-    const output: string = await sessionCaptureOutput(tmuxName);
+    const output: string = await sessionCaptureOutput(tmuxName, compactSession);
     const trimmed: string = output.trim().split('\n').slice(-5).join('\n');
     await sendMessage(`\u23f3 *${escapeMarkdown(resolved.workspace)}* compact may still be running:\n\`\`\`\n${trimmed}\n\`\`\``);
   } catch {
@@ -623,8 +814,11 @@ async function startProject(name: string): Promise<void> {
   // 3. Sanitize tmux session name (dots, colons, spaces are invalid in tmux)
   const tmuxName: string = name.replace(/[.:\s]/g, '-');
 
-  // 4. Check existing session (PTY or tmux)
-  const alreadyRunning = await sessionExists(tmuxName);
+  // 4. Check existing session (PTY, Ghostty, or tmux)
+  const existingEntry = Object.values(readSessionMap()).find(s => s.tmuxSession === tmuxName && !isExpired(s));
+  const alreadyRunning = existingEntry
+    ? await sessionExists(tmuxName, existingEntry)
+    : await sessionExists(tmuxName);
   if (alreadyRunning) {
     upsertSession({ cwd: projectDir, tmuxSession: tmuxName, status: 'waiting', sessionId: null });
     recordProjectUsage(name, projectDir);
@@ -633,10 +827,10 @@ async function startProject(name: string): Promise<void> {
     return;
   }
 
-  // 5. Create session — PTY or tmux
-  const usePty = !TMUX_AVAILABLE || INJECTION_MODE === 'pty';
+  // 5. Create session — Ghostty, PTY, or tmux
+  const mode = getEffectiveMode();
 
-  if (!usePty) {
+  if (mode === 'tmux') {
     // tmux path (existing behaviour)
     try {
       await tmuxExec(`tmux new-session -d -s "${tmuxName}" -c "${projectDir}"`);
@@ -660,7 +854,27 @@ async function startProject(name: string): Promise<void> {
     if (msg && msg.message_id) {
       trackNotificationMessage(msg.message_id, name, 'new-session');
     }
-  } else if (ptySessionManager.isAvailable()) {
+  } else if (mode === 'ghostty') {
+    // Ghostty path — opens a new tab in the front Ghostty window
+    const ok = await ghosttySessionManager.openNewTab(projectDir, 'claude');
+    if (!ok) { await sendMessage('Failed to open Ghostty tab.'); return; }
+
+    ghosttySessionManager.register(tmuxName, projectDir);
+    upsertSession({ cwd: projectDir, tmuxSession: tmuxName, status: 'starting', sessionId: null, sessionType: 'ghostty' });
+    recordProjectUsage(name, projectDir);
+    setDefaultWorkspace(name);
+
+    const msg = await sendMessage(
+      `Started Claude in *${escapeMarkdown(name)}*\n\n` +
+      `*Path:* \`${projectDir}\`\n` +
+      `*Session:* \`${tmuxName}\`\n\n` +
+      `Default workspace set — send messages directly.\n\n` +
+      `_Ghostty tab — visible in your Ghostty window._`
+    ) as TelegramMessage | undefined;
+    if (msg && msg.message_id) {
+      trackNotificationMessage(msg.message_id, name, 'new-session');
+    }
+  } else if (mode === 'pty') {
     // PTY path — spawns 'claude' directly (no separate send-keys step)
     const ok = ptySessionManager.spawn(tmuxName, projectDir);
     if (!ok) { await sendMessage('Failed to spawn PTY session.'); return; }
@@ -681,8 +895,8 @@ async function startProject(name: string): Promise<void> {
     }
   } else {
     await sendMessage(
-      '\u26a0\ufe0f tmux not found and node-pty not installed.\n' +
-      'Install tmux or run: `npm install node-pty` in ~/.ccgram/'
+      '\u26a0\ufe0f No injection backend available.\n' +
+      'Install tmux, run Ghostty, or run: `npm install node-pty` in ~/.ccgram/'
     );
   }
 }
@@ -784,13 +998,13 @@ async function resumeSession(projectName: string, sessionIdx: number, force: boo
 
   const sessionId = sessions[sessionIdx].id;
   const tmuxName = projectName.replace(/[.:\s]/g, '-');
-  const running = await sessionExists(tmuxName);
 
-  // Look up the bot's tracked session for this workspace (used by multiple checks below)
-  const map = running ? readSessionMap() : {};
-  const currentEntry = running
-    ? Object.values(map).find(s => s.tmuxSession === tmuxName && !isExpired(s))
-    : undefined;
+  // Look up the bot's tracked session BEFORE checking sessionExists
+  const map = readSessionMap();
+  const currentEntry = Object.values(map).find(s => s.tmuxSession === tmuxName && !isExpired(s));
+  const running = currentEntry
+    ? await sessionExists(tmuxName, currentEntry)
+    : (isPtySession(tmuxName) || (TMUX_AVAILABLE && await sessionExists(tmuxName)));
   const botOwnsThisSession = currentEntry?.sessionId === sessionId;
 
   // If the bot already has this exact session running, just re-route to it
@@ -849,6 +1063,25 @@ async function resumeSession(projectName: string, sessionIdx: number, force: boo
       // Confirmed — kill the PTY so startProjectResume can respawn
       ptySessionManager.kill(tmuxName);
       await sleep(300);
+    } else if (currentEntry && isGhosttySession(currentEntry)) {
+      // Ghostty: old tab stays open idle — warn before opening a new tab
+      if (!force) {
+        await telegramAPI('sendMessage', {
+          chat_id: CHAT_ID,
+          text: `\u26a0\ufe0f *${escapeMarkdown(projectName)}* has an active Ghostty session\n\n` +
+            `Resuming will open a new tab. The existing tab will stay open but idle.\n\n` +
+            `_You can close the old tab manually._`,
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '\u25b6\ufe0f Resume anyway', callback_data: `rc:${projectName}:${sessionIdx}` },
+            ]],
+          },
+        });
+        return;
+      }
+      // Confirmed — unregister handle so startProjectResume opens a fresh tab
+      ghosttySessionManager.unregister(tmuxName);
     }
     // tmux: no warning needed — startProjectResume switches inline
   }
@@ -860,9 +1093,16 @@ async function startProjectResume(name: string, projectDir: string, sessionId: s
   const tmuxName: string = name.replace(/[.:\s]/g, '-');
   const shortId: string = sessionId.slice(0, 8);
 
-  // If a tmux session is already running, switch Claude inline (exit + resume)
-  // instead of killing the tmux session. This keeps the user's terminal attached.
-  if (!isPtySession(tmuxName) && await sessionExists(tmuxName)) {
+  // Look up the current session entry BEFORE checking sessionExists
+  const map = readSessionMap();
+  const currentEntry = Object.values(map).find(s => s.tmuxSession === tmuxName && !isExpired(s));
+  const running = currentEntry
+    ? await sessionExists(tmuxName, currentEntry)
+    : (isPtySession(tmuxName) || (TMUX_AVAILABLE && await sessionExists(tmuxName)));
+
+  // If a tmux session is already running (and not PTY/Ghostty), switch Claude inline
+  // (exit + resume) instead of killing the tmux session. This keeps the terminal attached.
+  if (!isPtySession(tmuxName) && !(currentEntry && isGhosttySession(currentEntry)) && running) {
     try {
       // Double Ctrl+C: first interrupts any running Claude task,
       // second clears the input line if Claude returned to its prompt
@@ -897,10 +1137,10 @@ async function startProjectResume(name: string, projectDir: string, sessionId: s
     return;
   }
 
-  // No session running — create a new one
-  const usePty = !TMUX_AVAILABLE || INJECTION_MODE === 'pty';
+  // No session running (or was PTY/Ghostty that's been killed) — create a new one
+  const mode = getEffectiveMode();
 
-  if (!usePty) {
+  if (mode === 'tmux') {
     try {
       await tmuxExec(`tmux new-session -d -s "${tmuxName}" -c "${projectDir}"`);
       await sleep(300);
@@ -924,7 +1164,27 @@ async function startProjectResume(name: string, projectDir: string, sessionId: s
     if (msg && msg.message_id) {
       trackNotificationMessage(msg.message_id, name, 'resume-session');
     }
-  } else if (ptySessionManager.isAvailable()) {
+  } else if (mode === 'ghostty') {
+    const ok = await ghosttySessionManager.openNewTab(projectDir, `claude --resume ${sessionId}`);
+    if (!ok) { await sendMessage('Failed to open Ghostty tab.'); return; }
+
+    ghosttySessionManager.register(tmuxName, projectDir);
+    upsertSession({ cwd: projectDir, tmuxSession: tmuxName, status: 'starting', sessionId, sessionType: 'ghostty' });
+    recordProjectUsage(name, projectDir);
+    setDefaultWorkspace(name);
+
+    const msg = await sendMessage(
+      `Resumed Claude in *${escapeMarkdown(name)}*\n\n` +
+      `*Path:* \`${projectDir}\`\n` +
+      `*Session:* \`${tmuxName}\`\n` +
+      `*Resumed:* \`${shortId}...\`\n\n` +
+      `Default workspace set — send messages directly.\n\n` +
+      `_Ghostty tab — visible in your Ghostty window._`
+    ) as TelegramMessage | undefined;
+    if (msg && msg.message_id) {
+      trackNotificationMessage(msg.message_id, name, 'resume-session');
+    }
+  } else if (mode === 'pty') {
     const ok = ptySessionManager.spawn(tmuxName, projectDir, ['--resume', sessionId]);
     if (!ok) { await sendMessage('Failed to spawn PTY session.'); return; }
 
@@ -945,8 +1205,8 @@ async function startProjectResume(name: string, projectDir: string, sessionId: s
     }
   } else {
     await sendMessage(
-      '\u26a0\ufe0f tmux not found and node-pty not installed.\n' +
-      'Install tmux or run: `npm install node-pty` in ~/.ccgram/'
+      '\u26a0\ufe0f No injection backend available.\n' +
+      'Install tmux, run Ghostty, or run: `npm install node-pty` in ~/.ccgram/'
     );
   }
 }
@@ -954,7 +1214,7 @@ async function startProjectResume(name: string, projectDir: string, sessionId: s
 async function injectAndRespond(session: SessionEntry, command: string, workspace: string): Promise<boolean> {
   const tmuxName: string = session.tmuxSession;
 
-  if (!await sessionExists(tmuxName)) {
+  if (!await sessionExists(tmuxName, session)) {
     await sendMessage(`\u26a0\ufe0f Session not found. Start Claude via /new for full remote control, or use tmux.`);
     return false;
   }
@@ -967,6 +1227,12 @@ async function injectAndRespond(session: SessionEntry, command: string, workspac
       ptySessionManager.write(tmuxName, command);  // raw command text
       await sleep(150);
       ptySessionManager.write(tmuxName, '\r');     // Enter
+    } else if (isGhosttySession(session)) {
+      // Ghostty: inject via AppleScript input text
+      ghosttySessionManager.register(tmuxName, session.cwd);
+      await ghosttySessionManager.sendKey(tmuxName, 'C-u');  // Ctrl+U: clear line
+      await sleep(150);
+      await ghosttySessionManager.writeLine(tmuxName, command); // text + send key "return" atomically
     } else {
       // tmux: existing shell-escaped path
       const escapedCommand: string = command.replace(/'/g, "'\"'\"'");
@@ -993,16 +1259,25 @@ function tmuxExec(cmd: string): Promise<boolean> {
   });
 }
 
-// ── PTY / tmux dispatch helpers ──────────────────────────────────
+// ── PTY / tmux / Ghostty dispatch helpers ────────────────────────
 
 /** Is this session managed as a live PTY handle by this bot process? */
 function isPtySession(sessionName: string): boolean {
   return ptySessionManager.has(sessionName);
 }
 
-/** Check session exists (PTY handle OR tmux session). */
-async function sessionExists(name: string): Promise<boolean> {
+/** Is this session a Ghostty session (by stored sessionType)? */
+function isGhosttySession(session: SessionEntry): boolean {
+  return session.sessionType === 'ghostty';
+}
+
+/** Check session exists (PTY handle, Ghostty, OR tmux session). */
+async function sessionExists(name: string, session?: SessionEntry): Promise<boolean> {
   if (ptySessionManager.has(name)) return true;
+  if (session && isGhosttySession(session)) {
+    ghosttySessionManager.register(name, session.cwd);
+    return ghosttySessionManager.isAvailable();
+  }
   if (TMUX_AVAILABLE) {
     try { await tmuxExec(`tmux has-session -t ${name} 2>/dev/null`); return true; }
     catch { return false; }
@@ -1013,31 +1288,45 @@ async function sessionExists(name: string): Promise<boolean> {
 /**
  * Send a named key (Down, Up, Enter, C-m, C-c, C-u, Space) to a session.
  * For PTY: translates to escape sequence via ptySessionManager.sendKey.
+ * For Ghostty: translates via ghosttySessionManager.sendKey (ANSI or modifiers).
  * For tmux: passes key name directly to tmux send-keys.
  */
-async function sessionSendKey(name: string, key: string): Promise<void> {
+async function sessionSendKey(name: string, key: string, session?: SessionEntry): Promise<void> {
   if (isPtySession(name)) {
     ptySessionManager.sendKey(name, key);
+  } else if ((session && isGhosttySession(session)) || ghosttySessionManager.has(name)) {
+    if (session) ghosttySessionManager.register(name, session.cwd);
+    await ghosttySessionManager.sendKey(name, key);
   } else {
     await tmuxExec(`tmux send-keys -t ${name} ${key}`);
   }
   await sleep(100);
 }
 
-/** Capture session output (last 20 lines). */
-async function sessionCaptureOutput(name: string): Promise<string> {
+/** Capture session output. */
+async function sessionCaptureOutput(name: string, session?: SessionEntry): Promise<string> {
   if (isPtySession(name)) return ptySessionManager.capture(name, 20) ?? '';
+  if ((session && isGhosttySession(session)) || ghosttySessionManager.has(name)) {
+    if (session) ghosttySessionManager.register(name, session.cwd);
+    return await ghosttySessionManager.capture(name) ?? '(Ghostty scrollback capture unavailable)';
+  }
   return capturePane(name);
 }
 
 /** Send Ctrl+C interrupt to a session. */
-async function sessionInterrupt(name: string): Promise<void> {
+async function sessionInterrupt(name: string, session?: SessionEntry): Promise<void> {
   if (isPtySession(name)) ptySessionManager.interrupt(name);
-  else await tmuxExec(`tmux send-keys -t ${name} C-c`);
+  else if ((session && isGhosttySession(session)) || ghosttySessionManager.has(name)) {
+    if (session) ghosttySessionManager.register(name, session.cwd);
+    await ghosttySessionManager.interrupt(name);
+  } else {
+    await tmuxExec(`tmux send-keys -t ${name} C-c`);
+  }
 }
 
 /** Icon for /sessions listing based on session type and live status. */
 function sessionIcon(s: { workspace: string; token: string; session: SessionEntry; age: string }): string {
+  if (s.session.sessionType === 'ghostty') return '\u{1F47B}'; // 👻
   if (s.session.sessionType === 'pty') {
     return ptySessionManager.has(s.session.tmuxSession) ? '\u{1F916}' : '\u{1F4A4}'; // 🤖 or 💤
   }
@@ -1120,7 +1409,10 @@ async function processCallbackQuery(query: TelegramCallbackQuery): Promise<void>
     }
 
     const { action } = parsed;
-    const label: string = action === 'allow' ? '\u2705 Allowed' : action === 'always' ? '\ud83d\udd13 Always Allowed' : '\u274c Denied';
+    const label: string = action === 'allow' ? '\u2705 Allowed'
+      : action === 'always' ? '\ud83d\udd13 Always Allowed'
+      : action === 'defer' ? '\u23F8 Deferred'
+      : '\u274c Denied';
 
     // Write response file — the permission-hook.js is polling for this
     try {
@@ -1183,39 +1475,24 @@ async function processCallbackQuery(query: TelegramCallbackQuery): Promise<void>
       return;
     }
 
-    // Single-select: inject arrow keys + Enter into session
-    // Claude Code's AskUserQuestion UI: first option pre-highlighted, Down (N-1) times + Enter
-    const downPresses: number = optIdx;
-    const tmuxSessOpt: string = pending.tmuxSession as string;
-    try {
-      for (let i = 0; i < downPresses; i++) {
-        await sessionSendKey(tmuxSessOpt, 'Down');
-      }
-      await sessionSendKey(tmuxSessOpt, 'Enter');
+    // Single-select: write response file so hook can return updatedInput
+    // (No keystroke injection needed — hook polls for this file)
+    writeResponse(promptId, {
+      action: 'answer',
+      selectedOption: parsed.optionIndex,
+      selectedLabel: optionLabel,
+    });
 
-      // For multi-question flows: after the last question, send an extra
-      // Enter to confirm the preview/submit step
-      if (pending.isLast) {
-        await sleep(500);
-        await sessionSendKey(tmuxSessOpt, 'Enter');
-      }
-
-      await answerCallbackQuery(query.id, `Selected: ${optionLabel}`);
-      startTypingIndicator(); // ensure Stop hook routes response back to Telegram
-    } catch (err: unknown) {
-      logger.error(`Failed to inject keystroke: ${(err as Error).message}`);
-      await answerCallbackQuery(query.id, 'Failed to send selection');
-      return;
-    }
+    await answerCallbackQuery(query.id, `Selected: ${optionLabel}`);
 
     // Edit message to show selection and remove buttons
     try {
-      await editMessageText(chatId, messageId!, `${originalText}\n\n— Selected: *${escapeMarkdown(optionLabel)}*`);
+      await editMessageText(chatId, messageId!, `${originalText}\n\n\u2714 Selected: *${escapeMarkdown(optionLabel)}*`);
     } catch (err: unknown) {
       logger.error(`Failed to edit message: ${(err as Error).message}`);
     }
 
-    cleanPrompt(promptId);
+    // Note: hook will clean up the prompt files after reading the response
 
   } else if (type === 'opt-submit') {
     // Multi-select submit: inject Space toggles for selected options, then Enter
@@ -1234,46 +1511,29 @@ async function processCallbackQuery(query: TelegramCallbackQuery): Promise<void>
       return;
     }
 
-    // Inject keystrokes: iterate each option from top, Space if selected, Down to next
-    // Claude Code multi-select UI starts with cursor on first option
-    // After the listed options, Claude Code adds an auto-generated "Other" option,
-    // then Submit. So we need: options.length Downs + 1 more Down to skip "Other"
-    const tmuxSessSubmit: string = pending.tmuxSession as string;
-    try {
-      for (let i = 0; i < (pending.options as string[]).length; i++) {
-        if (selected[i]) {
-          await sessionSendKey(tmuxSessSubmit, 'Space');
-        }
-        await sessionSendKey(tmuxSessSubmit, 'Down');
-      }
-      // Skip past the auto-added "Other" option to reach Submit
-      await sessionSendKey(tmuxSessSubmit, 'Down');
-      // Cursor is now on Submit — press Enter
-      await sessionSendKey(tmuxSessSubmit, 'Enter');
+    // Multi-select submit: write response file so hook can return updatedInput
+    // (No keystroke injection needed — hook polls for this file)
+    const selectedIndices: number[] = selected
+      .map((sel: boolean, idx: number) => sel ? idx + 1 : null)
+      .filter((idx): idx is number => idx !== null);
 
-      // For multi-question flows: extra Enter to confirm
-      if (pending.isLast) {
-        await sleep(500);
-        await sessionSendKey(tmuxSessSubmit, 'Enter');
-      }
+    writeResponse(promptId, {
+      action: 'answer',
+      selectedOptions: selectedIndices,
+      selectedLabels,
+    });
 
-      await answerCallbackQuery(query.id, `Submitted ${selectedLabels.length} options`);
-      startTypingIndicator(); // ensure Stop hook routes response back to Telegram
-    } catch (err: unknown) {
-      logger.error(`Failed to inject keystrokes: ${(err as Error).message}`);
-      await answerCallbackQuery(query.id, 'Failed to send selections');
-      return;
-    }
+    await answerCallbackQuery(query.id, `Submitted ${selectedLabels.length} options`);
 
     // Edit message to show selections and remove buttons
     const selectionText: string = selectedLabels.map(l => `\u2022 ${escapeMarkdown(l)}`).join('\n');
     try {
-      await editMessageText(chatId, messageId!, `${originalText}\n\n— Selected:\n${selectionText}`);
+      await editMessageText(chatId, messageId!, `${originalText}\n\n\u2714 Selected:\n${selectionText}`);
     } catch (err: unknown) {
       logger.error(`Failed to edit message: ${(err as Error).message}`);
     }
 
-    cleanPrompt(promptId);
+    // Note: hook will clean up the prompt files after reading the response
 
   } else if (type === 'qperm') {
     // Combined question+permission: allow permission AND inject answer keystroke
@@ -1304,12 +1564,13 @@ async function processCallbackQuery(query: TelegramCallbackQuery): Promise<void>
     if (pending.tmuxSession) {
       const tmux: string = pending.tmuxSession as string;
       const downPresses: number = optIdx;
+      const sessionEntryQperm = findSessionByTmuxName(tmux);
       setTimeout(async () => {
         try {
           for (let i = 0; i < downPresses; i++) {
-            await sessionSendKey(tmux, 'Down');
+            await sessionSendKey(tmux, 'Down', sessionEntryQperm);
           }
-          await sessionSendKey(tmux, 'Enter');
+          await sessionSendKey(tmux, 'Enter', sessionEntryQperm);
           startTypingIndicator(); // ensure Stop hook routes response back to Telegram
           logger.info(`Injected question answer into ${tmux}: option ${parsed.optionIndex}`);
         } catch (err: unknown) {
@@ -1321,6 +1582,52 @@ async function processCallbackQuery(query: TelegramCallbackQuery): Promise<void>
     // Edit message to show selection
     try {
       await editMessageText(chatId, messageId!, `${originalText}\n\n— Selected: *${escapeMarkdown(optionLabel)}*`);
+    } catch (err: unknown) {
+      logger.error(`Failed to edit message: ${(err as Error).message}`);
+    }
+
+  } else if (type === 'perm-denied') {
+    // Permission denied retry/dismiss
+    const { action } = parsed;
+    const label: string = action === 'retry' ? '\ud83d\udd04 Retrying...' : '\u274c Dismissed';
+
+    // Write response file for the polling hook
+    try {
+      writeResponse(promptId, { action });
+      logger.info(`Wrote perm-denied response for promptId=${promptId}: action=${action}`);
+      await answerCallbackQuery(query.id, label);
+    } catch (err: unknown) {
+      logger.error(`Failed to write perm-denied response: ${(err as Error).message}`);
+      await answerCallbackQuery(query.id, 'Failed to save response');
+      return;
+    }
+
+    // Edit message to show result and remove buttons
+    try {
+      await editMessageText(chatId, messageId!, `${originalText}\n\n— ${label}`);
+    } catch (err: unknown) {
+      logger.error(`Failed to edit message: ${(err as Error).message}`);
+    }
+
+  } else if (type === 'pre-compact') {
+    // Pre-compact proceed/block
+    const { action } = parsed;
+    const label: string = action === 'block' ? '\ud83d\uded1 Blocked' : '\u2705 Proceeding...';
+
+    // Write response file for the polling hook
+    try {
+      writeResponse(promptId, { action });
+      logger.info(`Wrote pre-compact response for promptId=${promptId}: action=${action}`);
+      await answerCallbackQuery(query.id, label);
+    } catch (err: unknown) {
+      logger.error(`Failed to write pre-compact response: ${(err as Error).message}`);
+      await answerCallbackQuery(query.id, 'Failed to save response');
+      return;
+    }
+
+    // Edit message to show result and remove buttons
+    try {
+      await editMessageText(chatId, messageId!, `${originalText}\n\n— ${label}`);
     } catch (err: unknown) {
       logger.error(`Failed to edit message: ${(err as Error).message}`);
     }
@@ -1395,6 +1702,27 @@ async function processMessage(msg: TelegramMessage): Promise<void> {
   const resumeMatch: RegExpMatchArray | null = text.match(/^\/resume(?:\s+(.+))?$/);
   if (resumeMatch) {
     await handleResume(resumeMatch[1] ? resumeMatch[1].trim() : null);
+    return;
+  }
+
+  // /link <prompt>
+  const linkMatch: RegExpMatchArray | null = text.match(/^\/link(?:\s+(.+))?$/s);
+  if (linkMatch) {
+    await handleLink(linkMatch[1] ? linkMatch[1].trim() : '');
+    return;
+  }
+
+  // /effort [workspace] low|medium|high
+  const effortMatch: RegExpMatchArray | null = text.match(/^\/effort(?:\s+(.+))?$/);
+  if (effortMatch) {
+    await handleEffort(effortMatch[1] ? effortMatch[1].trim() : '');
+    return;
+  }
+
+  // /model [workspace] <model>
+  const modelMatch: RegExpMatchArray | null = text.match(/^\/model(?:\s+(.+))?$/);
+  if (modelMatch) {
+    await handleModel(modelMatch[1] ? modelMatch[1].trim() : '');
     return;
   }
 

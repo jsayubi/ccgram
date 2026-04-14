@@ -13,11 +13,13 @@ import type { ParsedCallback } from '../types';
  * Parse a callback_data string into a structured object.
  *
  * Return shapes:
- *   { type: 'new',        projectName: string }
- *   { type: 'perm',       promptId: string, action: string }
- *   { type: 'opt',        promptId: string, optionIndex: number }
- *   { type: 'opt-submit', promptId: string }
- *   { type: 'qperm',      promptId: string, optionIndex: number }
+ *   { type: 'new',         projectName: string }
+ *   { type: 'perm',        promptId: string, action: string }
+ *   { type: 'opt',         promptId: string, optionIndex: number }
+ *   { type: 'opt-submit',  promptId: string }
+ *   { type: 'qperm',       promptId: string, optionIndex: number }
+ *   { type: 'perm-denied', promptId: string, action: string }
+ *   { type: 'pre-compact', promptId: string, action: string }
  */
 export function parseCallbackData(data: string | null | undefined): ParsedCallback | null {
   if (!data) return null;
@@ -72,6 +74,10 @@ export function parseCallbackData(data: string | null | undefined): ParsedCallba
       return { type: 'opt', promptId, optionIndex: parseInt(action, 10) };
     case 'qperm':
       return { type: 'qperm', promptId, optionIndex: parseInt(action, 10) };
+    case 'perm-denied':
+      return { type: 'perm-denied', promptId, action };
+    case 'pre-compact':
+      return { type: 'pre-compact', promptId, action };
     default:
       return null;
   }

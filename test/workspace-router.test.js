@@ -332,3 +332,90 @@ describe('getResumeableProjects', () => {
     expect(result.find(p => p.name === 'ghost-project')).toBeUndefined();
   });
 });
+
+describe('rate limit tracking', () => {
+  beforeEach(() => {
+    router.writeSessionMap({});
+  });
+
+  it('stores rate limit info via upsertSession', () => {
+    const rateLimit = {
+      remaining: 50,
+      limit: 100,
+      resetsAt: Math.floor(Date.now() / 1000) + 3600,
+      updatedAt: Date.now(),
+    };
+    router.upsertSession({
+      cwd: testDir,
+      tmuxSession: 'test-session',
+      status: 'completed',
+      sessionId: 'test-id',
+      rateLimit,
+    });
+
+    const result = router.getSessionRateLimit(path.basename(testDir));
+    expect(result).toBeDefined();
+    expect(result.remaining).toBe(50);
+    expect(result.limit).toBe(100);
+  });
+
+  it('updates rate limit for existing session', () => {
+    router.upsertSession({
+      cwd: testDir,
+      tmuxSession: 'test-session',
+      status: 'completed',
+      sessionId: 'test-id',
+    });
+
+    const rateLimit = {
+      remaining: 25,
+      limit: 100,
+      updatedAt: Date.now(),
+    };
+    const updated = router.updateSessionRateLimit(path.basename(testDir), rateLimit);
+    expect(updated).toBe(true);
+
+    const result = router.getSessionRateLimit(path.basename(testDir));
+    expect(result).toBeDefined();
+    expect(result.remaining).toBe(25);
+  });
+
+  it('returns false when updating non-existent session', () => {
+    const rateLimit = { remaining: 10, limit: 100, updatedAt: Date.now() };
+    const updated = router.updateSessionRateLimit('nonexistent', rateLimit);
+    expect(updated).toBe(false);
+  });
+
+  it('returns undefined for session without rate limit', () => {
+    router.upsertSession({
+      cwd: testDir,
+      tmuxSession: 'test-session',
+      status: 'completed',
+      sessionId: 'test-id',
+    });
+
+    const result = router.getSessionRateLimit(path.basename(testDir));
+    expect(result).toBeUndefined();
+  });
+
+  it('preserves rate limit on upsert without new rateLimit param', () => {
+    const rateLimit = { remaining: 50, limit: 100, updatedAt: Date.now() };
+    router.upsertSession({
+      cwd: testDir,
+      tmuxSession: 'test-session',
+      status: 'completed',
+      rateLimit,
+    });
+
+    // Upsert again without rateLimit
+    router.upsertSession({
+      cwd: testDir,
+      tmuxSession: 'test-session',
+      status: 'waiting',
+    });
+
+    const result = router.getSessionRateLimit(path.basename(testDir));
+    expect(result).toBeDefined();
+    expect(result.remaining).toBe(50);
+  });
+});

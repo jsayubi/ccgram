@@ -48,6 +48,18 @@ export interface CallbackResumeConfirm {
   sessionIdx: number;
 }
 
+export interface CallbackPermDenied {
+  type: 'perm-denied';
+  promptId: string;
+  action: string;
+}
+
+export interface CallbackPreCompact {
+  type: 'pre-compact';
+  promptId: string;
+  action: string;
+}
+
 export type ParsedCallback =
   | CallbackNew
   | CallbackPerm
@@ -56,4 +68,6 @@ export type ParsedCallback =
   | CallbackQperm
   | CallbackResumeProject
   | CallbackResumeSession
-  | CallbackResumeConfirm;
+  | CallbackResumeConfirm
+  | CallbackPermDenied
+  | CallbackPreCompact;

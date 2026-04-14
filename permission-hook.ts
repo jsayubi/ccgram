@@ -76,6 +76,7 @@ async function main(): Promise<void> {
   const toolInput = (payload.tool_input || {}) as Record<string, unknown>;
   const cwd = (payload.cwd as string) || process.cwd();
   const workspace = extractWorkspaceName(cwd)!;
+  const sessionTitle = (payload.session_title as string) || null; // v2.1.94+
   const promptId = generatePromptId();
   const tmuxSession = detectSessionName(cwd);
 
@@ -118,7 +119,9 @@ async function main(): Promise<void> {
     // Tool permission request
     const toolDescription = formatToolDescription(toolName, toolInput);
 
-    messageText = `\u{1F510} *Permission* — ${escapeMarkdown(workspace)}\n\n*Tool:* ${escapeMarkdown(toolName)}`;
+    // Include session title if available (v2.1.94+)
+    const titleSuffix = sessionTitle ? ` (${escapeMarkdown(sessionTitle)})` : '';
+    messageText = `\u{1F510} *Permission* — ${escapeMarkdown(workspace)}${titleSuffix}\n\n*Tool:* ${escapeMarkdown(toolName)}`;
     if (toolDescription) {
       const truncated = toolDescription.length > 2500
         ? toolDescription.slice(0, 2497) + '...'
@@ -132,6 +135,9 @@ async function main(): Promise<void> {
           { text: '\u2705 Allow', callback_data: `perm:${promptId}:allow` },
           { text: '\u274C Deny', callback_data: `perm:${promptId}:deny` },
           { text: '\u{1F513} Always', callback_data: `perm:${promptId}:always` },
+        ],
+        [
+          { text: '\u23F8 Defer', callback_data: `perm:${promptId}:defer` },
         ],
       ],
     };
@@ -168,27 +174,46 @@ async function main(): Promise<void> {
   if (response) {
     const action = (response.action as string) || 'allow';
     debugLog(`[${promptId}] Got response: action=${action}`);
-    let decision: 'allow' | 'deny';
-    if (action === 'deny') {
-      decision = 'deny';
-    } else {
-      decision = 'allow';
-    }
 
-    const output: PermissionHookOutput = {
-      hookSpecificOutput: {
-        hookEventName: 'PermissionRequest',
-        decision: {
-          behavior: decision,
+    // Handle defer action — pause the session so user can resume later
+    if (action === 'defer') {
+      // For PermissionRequest, defer means deny but with a message suggesting resume
+      const output: PermissionHookOutput = {
+        hookSpecificOutput: {
+          hookEventName: 'PermissionRequest',
+          decision: {
+            behavior: 'deny',
+          },
         },
-      },
-      systemMessage: `Decision received via Telegram: user ${decision}ed`,
-    };
+        systemMessage: 'Session paused via Telegram. Resume with: claude --resume',
+      };
+      const outputStr = JSON.stringify(output);
+      debugLog(`[${promptId}] Writing defer (as deny) to stdout: ${outputStr}`);
+      process.stdout.write(outputStr + '\n');
+      debugLog(`[${promptId}] Stdout written`);
+    } else {
+      let decision: 'allow' | 'deny';
+      if (action === 'deny') {
+        decision = 'deny';
+      } else {
+        decision = 'allow';
+      }
 
-    const outputStr = JSON.stringify(output);
-    debugLog(`[${promptId}] Writing to stdout: ${outputStr}`);
-    process.stdout.write(outputStr + '\n');
-    debugLog(`[${promptId}] Stdout written`);
+      const output: PermissionHookOutput = {
+        hookSpecificOutput: {
+          hookEventName: 'PermissionRequest',
+          decision: {
+            behavior: decision,
+          },
+        },
+        systemMessage: `Decision received via Telegram: user ${decision}ed`,
+      };
+
+      const outputStr = JSON.stringify(output);
+      debugLog(`[${promptId}] Writing to stdout: ${outputStr}`);
+      process.stdout.write(outputStr + '\n');
+      debugLog(`[${promptId}] Stdout written`);
+    }
   } else {
     debugLog(`[${promptId}] No response received (timed out or error)`);
   }

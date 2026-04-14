@@ -5,10 +5,21 @@
  * All other timestamps in the codebase use milliseconds.
  */
 
+export interface RateLimitInfo {
+  /** Requests remaining in current window */
+  remaining?: number;
+  /** Total requests allowed in window */
+  limit?: number;
+  /** Unix timestamp when limit resets (seconds) */
+  resetsAt?: number;
+  /** Last updated (Unix ms) */
+  updatedAt: number;
+}
+
 export interface SessionEntry {
   type: string;
   /** Actual session mode — absent means 'tmux' for backwards compatibility */
-  sessionType?: 'tmux' | 'pty';
+  sessionType?: 'tmux' | 'pty' | 'ghostty';
   /** Unix timestamp in SECONDS */
   createdAt: number;
   /** Unix timestamp in SECONDS */
@@ -17,6 +28,8 @@ export interface SessionEntry {
   sessionId: string | null;
   tmuxSession: string;
   description: string;
+  /** Rate limit info from Claude Code (v2.1.80+) */
+  rateLimit?: RateLimitInfo;
 }
 
 export interface SessionMap {

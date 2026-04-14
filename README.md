@@ -18,20 +18,23 @@ CCGram is a self-hosted Telegram bot that bridges Claude Code to your phone. Whe
 ```
 Claude Code  →  ccgram hooks  →  Telegram bot  →  📱 your phone
      ↑                                ↓
-     └──── tmux or PTY injection ─────┘
+     └─ updatedInput / tmux / Ghostty / PTY ─┘
 ```
 
 ## Features
 
-- **Permission approvals** — Allow, Deny, or Always allow with a single tap
-- **Question answering** — Select from Claude's options via inline buttons (single and multi-select)
-- **Smart notifications** — Task completions, session start/end, and subagent activity — silent when you're at your terminal, instant when you're away
+- **Universal terminal support** — Works with tmux, Ghostty, bare zsh, screen — anything. Question answers flow back to Claude Code directly via the `updatedInput` hook output, no keystroke injection needed.
+- **Permission approvals** — Allow, Deny, Always, or Defer with a single tap
+- **Question answering** — Single-select, multi-select, and free-text questions answered via Telegram buttons
+- **Rich `/status`** — Model, version, git branch, session ID, context window % (auto-detects 1M mode), rate limit + reset time, last activity, last assistant message — all from Claude Code's transcript
+- **MCP elicitation forwarding** — Schema-aware MCP server input requests routed to Telegram, one prompt per form field
+- **Smart notifications** — Task completions, errors, compaction, session lifecycle, subagent activity — silent at your terminal, instant when you're away
 - **Remote command routing** — Send any command to any Claude session from Telegram
-- **Session management** — List, switch between, and interrupt active sessions
-- **Resume conversations** — `/resume` reads your full Claude Code session history with conversation snippets — pick up any past conversation in one tap
+- **Session management** — List, switch, interrupt; resume past conversations with `/resume`
 - **Project launcher** — Start Claude in any project directory with `/new myproject`
+- **Deep links** — `/link <prompt>` generates `claude-cli://open?q=...` URLs
 - **Smart routing** — Prefix matching, default workspace, reply-to routing
-- **Typing indicator** — See when the bot is waiting for Claude to respond
+- **Ghostty support** — Auto-detected on macOS via `TERM_PROGRAM=ghostty`; full keystroke injection via AppleScript
 - **tmux optional** — Falls back to a headless PTY session (`node-pty`) when tmux is unavailable
 - **One-command setup** — Interactive wizard installs hooks, generates service file, starts bot
 
@@ -40,7 +43,10 @@ Claude Code  →  ccgram hooks  →  Telegram bot  →  📱 your phone
 - [Node.js](https://nodejs.org) 18+
 - A Telegram bot token (from [@BotFather](https://t.me/BotFather))
 - Your Telegram chat ID (from [@userinfobot](https://t.me/userinfobot))
-- [tmux](https://github.com/tmux/tmux/wiki) _(optional — falls back to headless PTY via `node-pty` when absent)_
+- A terminal — any of:
+  - [tmux](https://github.com/tmux/tmux/wiki) (recommended; cross-platform)
+  - [Ghostty](https://ghostty.org) (auto-detected on macOS via `TERM_PROGRAM`)
+  - bare zsh / screen / anything else (PTY fallback via `node-pty`)
 
 ## Quick Start
 
@@ -58,7 +64,7 @@ Then open Telegram and message your bot — Claude Code will now notify you remo
 
 ## How It Works
 
-CCGram integrates with [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) — shell scripts that Claude Code calls at key moments. Each hook script sends a Telegram message and, when you respond, injects keystrokes back into the tmux session running Claude.
+CCGram integrates with [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) — shell scripts that Claude Code calls at key moments. Hooks send Telegram messages and, depending on the event, return your response to Claude Code directly via stdout (`updatedInput` for questions, `decision` for permissions) or inject keystrokes into the active session (tmux, Ghostty, or PTY).
 
 ### Hooks installed
 
@@ -122,7 +128,7 @@ Claude asks a question (AskUserQuestion)
 | Command | Description |
 |---------|-------------|
 | `/<workspace> <command>` | Send a command to a specific Claude session |
-| `/status [workspace]` | Show the last 20 lines of output (includes rate limit info if available) |
+| `/status [workspace]` | Rich status: model, version, branch, session ID, context %, rate limit, last activity, last message (and recent pane output for tmux/PTY) |
 | `/stop [workspace]` | Send Ctrl+C to interrupt the running prompt |
 | `/compact [workspace]` | Run `/compact` and wait for it to complete |
 | `/effort [workspace] low\|medium\|high` | Set Claude's thinking effort level |
@@ -263,7 +269,7 @@ node dist/workspace-telegram-bot.js
 ```bash
 npm run build          # Compile TypeScript → dist/
 npm run build:watch    # Watch mode
-npm test               # Run 84 tests (vitest)
+npm test               # Run 120 tests (vitest)
 ```
 
 **Note:** Claude Code hooks run from `~/.ccgram/dist/`, not the repo's `dist/`. After changing hook scripts during development, sync them:
@@ -279,34 +285,42 @@ End users don't need this — `ccgram init` handles it automatically.
 ```
 src/
 ├── utils/
-│   ├── active-check.ts        # Detect terminal activity; suppress notifications when present
-│   ├── pty-session-manager.ts # Headless PTY backend via node-pty (tmux fallback)
-│   ├── callback-parser.ts     # Parse Telegram callback_data strings
-│   ├── http-request.ts        # Lightweight HTTPS wrapper (no axios)
-│   ├── optional-require.ts    # Graceful optional dependency loading
-│   └── paths.ts               # PROJECT_ROOT + CCGRAM_HOME constants
-├── types/                     # TypeScript interfaces
-└── data/                      # Runtime data (session map, history)
+│   ├── active-check.ts            # Detect terminal activity; suppress notifications when present
+│   ├── pty-session-manager.ts     # Headless PTY backend via node-pty (tmux fallback)
+│   ├── ghostty-session-manager.ts # Ghostty AppleScript backend (macOS, auto-detected)
+│   ├── transcript-reader.ts       # Read Claude Code session JSONL for /status (model, context %, last message)
+│   ├── deep-link.ts               # Generate claude-cli://open?q=... URLs for /link
+│   ├── callback-parser.ts         # Parse Telegram callback_data strings
+│   ├── http-request.ts            # Lightweight HTTPS wrapper (no axios)
+│   ├── optional-require.ts        # Graceful optional dependency loading
+│   └── paths.ts                   # PROJECT_ROOT + CCGRAM_HOME constants
+├── types/                         # TypeScript interfaces
+└── data/                          # Runtime data (session map, history)
 
-workspace-telegram-bot.ts      # Main bot (long-polling, routing, callbacks)
-workspace-router.ts            # Session map, prefix matching, default workspace
-prompt-bridge.ts               # File-based IPC via /tmp/claude-prompts/
-permission-hook.ts             # Blocking permission approval hook
-question-notify.ts             # Non-blocking question notification hook
-enhanced-hook-notify.ts        # Status notification hook (Stop, Notification, SessionStart, SessionEnd, SubagentStop)
-user-prompt-hook.ts            # UserPromptSubmit hook — writes terminal activity timestamp
-setup.ts                       # Interactive setup wizard
-cli.ts                         # ccgram CLI entry point
+workspace-telegram-bot.ts          # Main bot (long-polling, routing, callbacks, /status, /link, /effort, /model)
+workspace-router.ts                # Session map, prefix matching, default workspace, rate limit storage
+prompt-bridge.ts                   # File-based IPC via /tmp/claude-prompts/
+permission-hook.ts                 # Blocking permission approval hook
+permission-denied-notify.ts        # PermissionDenied hook with retry button
+question-notify.ts                 # Blocking AskUserQuestion hook (returns updatedInput to Claude Code)
+enhanced-hook-notify.ts            # Status notifications (Stop, Notification, SessionStart/End, SubagentStop, StopFailure, PostCompact, TaskCreated, CwdChanged, InstructionsLoaded)
+pre-compact-notify.ts              # PreCompact hook with block button
+elicitation-notify.ts              # MCP elicitation hook (schema-aware, per-field)
+user-prompt-hook.ts                # UserPromptSubmit hook — writes terminal activity timestamp
+setup.ts                           # Interactive setup wizard
+cli.ts                             # ccgram CLI entry point
 ```
 
 ### Tests
 
 ```
 test/
-├── prompt-bridge.test.js     # 15 tests — IPC write/read/update/clean/expiry
-├── workspace-router.test.js  # 38 tests — session map, prefix matching, defaults, reply-to, session history
-├── callback-parser.test.js   # 23 tests — all callback_data formats (perm, opt, new, rp, rs, rc)
-└── active-check.test.js      #  8 tests — terminal activity detection, thresholds
+├── prompt-bridge.test.js          # 15 tests — IPC write/read/update/clean/expiry
+├── workspace-router.test.js       # 43 tests — session map, prefix matching, defaults, reply-to, history, rate limits
+├── callback-parser.test.js        # 27 tests — all callback_data formats (perm, opt, new, rp, rs, rc, perm-denied, pre-compact)
+├── active-check.test.js           #  8 tests — terminal activity detection, thresholds
+├── deep-link.test.js              # 11 tests — claude-cli:// URL generation, encoding, character limits
+└── ghostty-session-manager.test.js # 16 tests — Ghostty AppleScript session management (mocked)
 ```
 
 Tests use isolated temp directories and run with `npm test` (vitest, no configuration needed).
@@ -336,18 +350,24 @@ Yes. Each Claude session maps to a named tmux or PTY session. Use `/sessions` to
 Yes. `/resume` reads from Claude Code's own session storage, so it sees every conversation — not just ones started through the bot. If the session is still running in your terminal, you'll get a warning before resuming to prevent conflicts.
 
 **Do I need tmux?**
-No. When tmux is not detected, CCGram automatically falls back to headless PTY sessions powered by [`node-pty`](https://github.com/microsoft/node-pty). No configuration required — it activates on its own.
+No. CCGram supports three injection backends and picks the right one automatically:
+- **tmux** (default when running) — cross-platform, recommended
+- **Ghostty** — auto-detected on macOS via `TERM_PROGRAM=ghostty`; uses AppleScript for keystroke injection and tab focus
+- **PTY** (`node-pty`) — headless fallback when neither tmux nor Ghostty is available
 
-To use PTY mode:
-1. Install the optional dependency: `npm install node-pty` inside `~/.ccgram/`
-2. PTY activates automatically when `tmux` is not running, or force it explicitly:
-   ```bash
-   # in ~/.ccgram/.env
-   INJECTION_MODE=pty
-   ```
-3. Restart the bot: `launchctl kickstart -k gui/$(id -u)/com.ccgram` (macOS) or `sudo systemctl restart ccgram` (Linux)
+For question answering specifically (the `AskUserQuestion` hook), CCGram returns answers to Claude Code directly via the `updatedInput` hook output — so it works on **any** terminal, including bare zsh, screen, or anything else, without keystroke injection at all.
 
-Full remote control — permission approvals, question answering, `/new`, `/stop` — works identically in both modes.
+To force a specific backend:
+```bash
+# in ~/.ccgram/.env
+INJECTION_MODE=pty   # or tmux
+```
+
+Then restart the bot: `launchctl kickstart -k gui/$(id -u)/com.ccgram` (macOS) or `sudo systemctl restart ccgram` (Linux).
+
+To use PTY mode, install the optional dependency: `npm install node-pty` inside `~/.ccgram/`.
+
+Full remote control — permission approvals, question answering, `/new`, `/stop` — works identically in all modes.
 
 **Is my bot token stored securely?**
 The token is stored in `~/.ccgram/.env`, readable only by your user. It's never logged or transmitted beyond Telegram's API.

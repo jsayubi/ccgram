@@ -2,6 +2,19 @@
 
 All notable changes to CCGram are documented here.
 
+## [1.2.1] - 2026-04-14
+
+### Documentation
+
+- README updated for v1.2.0 features: universal terminal support, Ghostty backend, rich `/status`, deep links, the eight new hooks, and the `transcript-reader` / `deep-link` / `ghostty-session-manager` modules
+- Architecture diagram now lists `permission-denied-notify`, `pre-compact-notify`, `elicitation-notify` and the new `src/utils/` files
+- FAQ "Do I need tmux?" entry rewritten to cover all three injection backends
+- Test counts updated (84 → 120 tests across 6 suites)
+
+No code changes from v1.2.0 — patch bump only so npm picks up the refreshed README on the package page.
+
+---
+
 ## [1.2.0] - 2026-04-14
 
 The biggest release yet. Universal terminal support, eight new hook integrations, a completely rewritten `/status`, and a sweep of critical hook-format fixes that were silently breaking question answering.

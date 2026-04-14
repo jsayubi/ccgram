@@ -2,6 +2,78 @@
 
 All notable changes to CCGram are documented here.
 
+## [1.2.0] - 2026-04-14
+
+The biggest release yet. Universal terminal support, eight new hook integrations, a completely rewritten `/status`, and a sweep of critical hook-format fixes that were silently breaking question answering.
+
+### Headline features
+
+- **Direct question answering — no more keystroke injection.** `AskUserQuestion` answers now flow back to Claude Code through the `updatedInput` hook output, so Telegram answers land in any terminal: tmux, Ghostty, bare zsh, screen, anything. The AppleScript / tmux-send-keys path for questions is gone.
+- **Ghostty integration.** `src/utils/ghostty-session-manager.ts` adds full Ghostty support via AppleScript — auto-detected when `TERM_PROGRAM=ghostty`. Keystroke injection, tab focus, and command routing all work the same as tmux. macOS only.
+- **Rich `/status` command.** Completely rewritten using Claude Code's transcript JSONL. Now shows model, Claude Code version, git branch, session ID + slug, context window usage with auto-detected 1M mode, rate limit + reset time, last activity timestamp, and the last assistant message snippet. Works for **every** terminal type — Ghostty, tmux, PTY, bare.
+- **Deep links.** New `/link <prompt>` command generates `claude-cli://open?q=...` URLs that open Claude Code anywhere with your prompt pre-filled.
+
+### Eight new hook events
+
+| Hook                 | What it gives you                                                       |
+|----------------------|-------------------------------------------------------------------------|
+| `PermissionDenied`   | Telegram retry button when auto-mode blocks a tool                      |
+| `PreCompact`         | Block context compaction with one tap                                   |
+| `PostCompact`        | Confirms compaction completed, with token savings                       |
+| `Elicitation`        | Forwards MCP server input requests to Telegram (schema-aware, per-field) |
+| `StopFailure`        | Instant alerts on API errors and rate limits                            |
+| `TaskCreated`        | Notify when Claude creates a task                                       |
+| `CwdChanged`         | Track when Claude changes working directory                             |
+| `InstructionsLoaded` | Debug aid for CLAUDE.md / rules loading                                 |
+
+### New Telegram commands
+
+- `/link <prompt>` — generate a Claude Code deep link
+- `/effort [workspace] low|medium|high` — set thinking effort
+- `/model [workspace] <model>` — switch model (sonnet, opus, haiku)
+
+### Permission improvements
+
+- **Defer button** on permission prompts pauses the session for async approval (resume later with `claude --resume`)
+- **Session title** support in permission and notification messages
+
+### Rate limit visibility
+
+- Hook payloads' `rate_limits` field now extracted and stored per-session in `session-map.json`
+- `/status` displays current usage, percent, and reset time when available
+
+### Conditional hooks
+
+- Claude Code v2.1.85+ `if` field (jq expression) supported in `setup.ts` `HOOK_DEFINITIONS` for conditional hook execution — reduces unnecessary spawning
+
+### Critical fixes
+
+Four hook scripts had silently-malformed stdout shapes that Claude Code was ignoring without any error log. All audited against the official docs and corrected:
+
+- **`question-notify.ts`** — was outputting `{questions: [{question, answer}]}` (an invented format). Now correctly echoes the original `questions` array plus a separate `answers` map keyed by question text, with `hookEventName: "PreToolUse"`. Multi-select answers join labels with commas. Symptom was "I answered in Telegram, then the question also popped up in the terminal."
+- **`pre-compact-notify.ts`** — had `decision: "block"` nested inside `hookSpecificOutput`. Per spec, `decision` belongs at the top level. Block button now actually blocks compaction.
+- **`permission-denied-notify.ts`** — was missing required `hookEventName: "PermissionDenied"`. Retry button now actually retries.
+- **`elicitation-notify.ts`** — had a completely invented shape. Now parses MCP `requested_schema.properties` from stdin, prompts the user once per field via Telegram, and emits the proper `{action: "accept", content: {<field>: <value>}}`. Timeout/send failure now emits `action: "cancel"` instead of hanging the MCP tool call. Also corrected payload field name (`mcp_server_name` → was reading `mcp_server`).
+
+### Other improvements
+
+- Removed stale `!pending.tmuxSession` check from the `opt:` and `opt-submit:` callback handlers (leftover from the pre-`updatedInput` keystroke-injection era; was silently dropping responses in bare-terminal sessions)
+- `enhanced-hook-notify.ts` extracts `last_assistant_message` directly from hook payloads (Claude Code v2.1.47+) with JSONL fallback for older versions
+- Added `logger.info` on response writes for easier debugging
+- Test suite grew from 84 → 120 tests across 6 suites (added `deep-link.test.js`, `ghostty-session-manager.test.js`, expanded `workspace-router.test.js` and `callback-parser.test.js`)
+
+### Upgrade
+
+```bash
+npx @jsayubi/ccgram@latest init
+```
+
+The wizard merges the new hook entries into `~/.claude/settings.json` and refreshes `~/.ccgram/dist/`. Existing config (`.env`, session map, project history) is preserved.
+
+**Full changelog:** https://github.com/jsayubi/ccgram/compare/v1.1.1...v1.2.0
+
+---
+
 ## [1.1.0] - 2026-02-24
 
 ### Features

@@ -33,16 +33,23 @@ const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const POLL_INTERVAL_MS = 500;
 const POLL_TIMEOUT_MS = 90000; // 90 seconds
 
-/** Output format for Claude Code's PreToolUse hook with updatedInput */
+/** Output format for Claude Code's PreToolUse hook with updatedInput.
+ *
+ * For AskUserQuestion, the hook must:
+ * 1. Include hookEventName: "PreToolUse"
+ * 2. Echo back the original `questions` array unchanged
+ * 3. Provide a separate `answers` object mapping question text → answer label
+ *    (multi-select: join labels with commas)
+ * 4. Set permissionDecision: "allow"
+ */
 interface QuestionHookOutput {
   hookSpecificOutput: {
-    updatedInput: {
-      questions: Array<{
-        question: string;
-        answer: string | string[];
-      }>;
-    };
+    hookEventName: 'PreToolUse';
     permissionDecision: 'allow';
+    updatedInput: {
+      questions: AskUserQuestionItem[];
+      answers: Record<string, string>;
+    };
   };
 }
 
@@ -80,8 +87,9 @@ async function main(): Promise<void> {
   // Detect session name (for session map, even though we don't inject keystrokes)
   const tmuxSession = detectSessionName(cwd);
 
-  // Collect answers for all questions
-  const answeredQuestions: Array<{ question: string; answer: string | string[] }> = [];
+  // Collect answers: map of question text → selected label(s)
+  // Multi-select: join labels with commas (Claude Code format).
+  const answers: Record<string, string> = {};
 
   // Process each question (usually just one)
   for (let qi = 0; qi < questions.length; qi++) {
@@ -148,13 +156,13 @@ async function main(): Promise<void> {
       if (response) {
         // Extract answer from response
         if (isMultiSelect) {
-          // Multi-select: response.selectedLabels is string[]
+          // Multi-select: response.selectedLabels is string[] — join with commas
           const selectedLabels = (response.selectedLabels as string[]) || [];
-          answeredQuestions.push({ question: questionText, answer: selectedLabels });
+          answers[questionText] = selectedLabels.join(',');
         } else {
           // Single-select: response.selectedLabel is string
           const selectedLabel = (response.selectedLabel as string) || '';
-          answeredQuestions.push({ question: questionText, answer: selectedLabel });
+          answers[questionText] = selectedLabel;
         }
       } else {
         // Timed out — exit without output (Claude Code will show native UI on retry)
@@ -191,7 +199,7 @@ async function main(): Promise<void> {
 
       if (response) {
         const textAnswer = (response.textAnswer as string) || '';
-        answeredQuestions.push({ question: questionText, answer: textAnswer });
+        answers[questionText] = textAnswer;
       } else {
         cleanPrompt(promptId);
         return;
@@ -201,14 +209,17 @@ async function main(): Promise<void> {
     }
   }
 
-  // Output updatedInput to stdout so Claude Code receives the answers directly
-  if (answeredQuestions.length > 0) {
+  // Output updatedInput to stdout so Claude Code receives the answers directly.
+  // Format: echo back original questions + separate `answers` object.
+  if (Object.keys(answers).length > 0) {
     const output: QuestionHookOutput = {
       hookSpecificOutput: {
-        updatedInput: {
-          questions: answeredQuestions,
-        },
+        hookEventName: 'PreToolUse',
         permissionDecision: 'allow',
+        updatedInput: {
+          questions,
+          answers,
+        },
       },
     };
     process.stdout.write(JSON.stringify(output) + '\n');

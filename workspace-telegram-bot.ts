@@ -1433,11 +1433,12 @@ async function processCallbackQuery(query: TelegramCallbackQuery): Promise<void>
     }
 
   } else if (type === 'opt') {
-    // Question option: inject keystroke via tmux
+    // Question option: write response file so hook returns updatedInput
+    // (No keystroke injection needed — hook polls for this file)
     const pending = readPending(promptId);
 
-    if (!pending || !pending.tmuxSession) {
-      await answerCallbackQuery(query.id, 'Session not found');
+    if (!pending) {
+      await answerCallbackQuery(query.id, 'Session expired');
       return;
     }
 
@@ -1482,6 +1483,7 @@ async function processCallbackQuery(query: TelegramCallbackQuery): Promise<void>
       selectedOption: parsed.optionIndex,
       selectedLabel: optionLabel,
     });
+    logger.info(`Wrote question response for promptId=${promptId}: selectedLabel=${optionLabel}`);
 
     await answerCallbackQuery(query.id, `Selected: ${optionLabel}`);
 
@@ -1495,11 +1497,11 @@ async function processCallbackQuery(query: TelegramCallbackQuery): Promise<void>
     // Note: hook will clean up the prompt files after reading the response
 
   } else if (type === 'opt-submit') {
-    // Multi-select submit: inject Space toggles for selected options, then Enter
+    // Multi-select submit: write response file so hook returns updatedInput
     const pending = readPending(promptId);
 
-    if (!pending || !pending.tmuxSession) {
-      await answerCallbackQuery(query.id, 'Session not found');
+    if (!pending) {
+      await answerCallbackQuery(query.id, 'Session expired');
       return;
     }
 

@@ -16,16 +16,7 @@ import https from 'https';
 import { execSync } from 'child_process';
 import dotenv from 'dotenv';
 import { PROJECT_ROOT, CCGRAM_HOME } from './src/utils/paths';
-
-interface HookDefinition {
-    event: string;
-    script: string;
-    timeout: number;
-    args?: string;
-    matcher?: string;
-    /** Claude Code v2.1.85+ - conditional execution (jq expression) */
-    if?: string;
-}
+import { HOOK_DEFINITIONS, uniqueHookScripts, type HookDefinition } from './src/utils/hook-definitions';
 
 interface SelectOption {
     label: string;
@@ -48,27 +39,9 @@ let projectRoot: string = PROJECT_ROOT;
 let envPath: string = path.join(projectRoot, '.env');
 let defaultSessionMap: string = path.join(PROJECT_ROOT, 'src', 'data', 'session-map.json');
 
-// Hook definitions for Claude Code integration
-const HOOK_DEFINITIONS: HookDefinition[] = [
-    // Core hooks
-    { event: 'PermissionRequest',  script: 'permission-hook.js',        timeout: 120 },
-    { event: 'PreToolUse',         script: 'question-notify.js',         timeout: 120, matcher: 'AskUserQuestion' },
-    { event: 'Stop',               script: 'enhanced-hook-notify.js',    args: 'completed',     timeout: 5 },
-    { event: 'Notification',       script: 'enhanced-hook-notify.js',    args: 'waiting',       timeout: 5, matcher: 'permission_prompt' },
-    { event: 'UserPromptSubmit',   script: 'user-prompt-hook.js',        timeout: 2 },
-    { event: 'SessionStart',       script: 'enhanced-hook-notify.js',    args: 'session-start', timeout: 5 },
-    { event: 'SessionEnd',         script: 'enhanced-hook-notify.js',    args: 'session-end',   timeout: 5 },
-    { event: 'SubagentStop',       script: 'enhanced-hook-notify.js',    args: 'subagent-done', timeout: 5 },
-    // Phase 2: New hook events (Claude Code v2.1.76+)
-    { event: 'PermissionDenied',   script: 'permission-denied-notify.js', timeout: 30 },
-    { event: 'StopFailure',        script: 'enhanced-hook-notify.js',    args: 'stop-failure',        timeout: 5 },
-    { event: 'PostCompact',        script: 'enhanced-hook-notify.js',    args: 'post-compact',        timeout: 5 },
-    { event: 'PreCompact',         script: 'pre-compact-notify.js',      timeout: 30 },
-    { event: 'Elicitation',        script: 'elicitation-notify.js',      timeout: 120 },
-    { event: 'TaskCreated',        script: 'enhanced-hook-notify.js',    args: 'task-created',        timeout: 5 },
-    { event: 'CwdChanged',         script: 'enhanced-hook-notify.js',    args: 'cwd-changed',         timeout: 5 },
-    { event: 'InstructionsLoaded', script: 'enhanced-hook-notify.js',    args: 'instructions-loaded', timeout: 5 },
-];
+// HOOK_DEFINITIONS is imported from src/utils/hook-definitions.ts so it stays
+// in sync with cli.ts (`ccgram hooks` command). Edit the shared module to
+// add or modify hooks — both this wizard and the CLI will pick it up.
 
 // ANSI color codes
 const colors = {
@@ -574,11 +547,12 @@ function installToHome(sourceRoot: string): string {
         }
     }
 
-    // Verify key files
+    // Verify key files — every distinct hook script + the bot + dotenv module.
+    // Derived from HOOK_DEFINITIONS so adding a new hook automatically tightens this check.
     const requiredFiles = [
-        'dist/permission-hook.js',
         'dist/workspace-telegram-bot.js',
         'node_modules/dotenv/package.json',
+        ...uniqueHookScripts().map(s => `dist/${s}`),
     ];
     const missing = requiredFiles.filter(f => !fs.existsSync(path.join(CCGRAM_HOME, f)));
     if (missing.length > 0) {

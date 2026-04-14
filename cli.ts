@@ -6,15 +6,9 @@ import { spawn, execSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { PROJECT_ROOT, CCGRAM_HOME } from './src/utils/paths';
+import { HOOK_DEFINITIONS } from './src/utils/hook-definitions';
 
 const [,, cmd, ...args] = process.argv;
-
-const HOOK_DEFINITIONS = [
-  { event: 'PermissionRequest', script: 'permission-hook.js', timeout: 120, matcher: undefined as string | undefined, args: undefined as string | undefined },
-  { event: 'PreToolUse', script: 'question-notify.js', timeout: 5, matcher: 'AskUserQuestion', args: undefined as string | undefined },
-  { event: 'Stop', script: 'enhanced-hook-notify.js', args: 'completed', timeout: 5, matcher: undefined as string | undefined },
-  { event: 'Notification', script: 'enhanced-hook-notify.js', args: 'waiting', timeout: 5, matcher: 'permission_prompt' },
-];
 
 /**
  * Resolve the dist/ directory to use for runtime commands.
@@ -68,6 +62,7 @@ switch (cmd) {
       const hook = { type: 'command', command, timeout: def.timeout };
       const entry: Record<string, unknown> = { hooks: [hook] };
       if (def.matcher) entry.matcher = def.matcher;
+      if (def.if) entry.if = def.if;
       hooks[def.event] = hooks[def.event] || [];
       hooks[def.event].push(entry);
     }

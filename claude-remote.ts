@@ -1043,7 +1043,7 @@ Examples:
   claude-remote commands list             # View pending email commands
   claude-remote relay start               # Run in foreground (need to keep window open)
 
-For more information, visit: https://github.com/CCGram/CCGram
+For more information, visit: https://github.com/jsayubi/ccgram
         `);
     }
 }

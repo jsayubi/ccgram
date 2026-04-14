@@ -2,6 +2,25 @@
 
 All notable changes to CCGram are documented here.
 
+## [1.2.2] - 2026-04-14
+
+### Fixes
+
+- **`ccgram hooks` command was missing 12 of 16 hooks.** `cli.ts` had its own out-of-date copy of `HOOK_DEFINITIONS` listing only PermissionRequest, PreToolUse, Stop, and Notification. Users who copy-pasted the output were silently missing PermissionDenied, PreCompact, PostCompact, Elicitation, StopFailure, TaskCreated, CwdChanged, InstructionsLoaded, UserPromptSubmit, SessionStart, SessionEnd, and SubagentStop.
+- **`PreToolUse` timeout in `ccgram hooks` output was 5s instead of 120s** — the question hook can't complete a Telegram poll round-trip in 5 seconds, so the printed config would always time out before the user could answer.
+- **`installToHome` only verified 2 of 7 hook scripts** (`permission-hook.js` and `workspace-telegram-bot.js`). A partial install missing newer scripts like `pre-compact-notify.js` or `elicitation-notify.js` would silently report success. Now derived from `HOOK_DEFINITIONS` so the check tightens automatically when hooks are added.
+
+### Refactor
+
+- New shared module `src/utils/hook-definitions.ts` is the single source of truth for the 16 hooks ccgram installs. Both `setup.ts` (the interactive wizard) and `cli.ts` (the `ccgram hooks` command) now import from it, so they cannot drift apart again.
+
+### Other
+
+- LICENSE updated to correct copyright holder (`Copyright (c) 2026 JS Ayubi`)
+- `claude-remote.ts` help text updated with the correct repo URL (`github.com/jsayubi/ccgram`)
+
+---
+
 ## [1.2.1] - 2026-04-14
 
 ### Documentation

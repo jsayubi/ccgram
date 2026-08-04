@@ -121,7 +121,7 @@ class TmuxInjector {
                 const sendCommand = `tmux send-keys -t ${this.sessionName} '${escapedCommand}'`;
 
                 // 3. Send enter
-                const enterCommand = `tmux send-keys -t ${this.sessionName} C-m`;
+                const enterCommand = `tmux send-keys -t ${this.sessionName} Enter`;
 
                 this.log.debug(`Injecting command via tmux: ${command}`);
 

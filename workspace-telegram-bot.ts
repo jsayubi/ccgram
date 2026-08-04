@@ -1336,7 +1336,7 @@ async function injectAndRespond(session: SessionEntry, command: string, workspac
       await sleep(150);
       await tmuxExec(`tmux send-keys -t ${tmuxName} '${escapedCommand}'`);
       await sleep(150);
-      await tmuxExec(`tmux send-keys -t ${tmuxName} C-m`);
+      await tmuxExec(`tmux send-keys -t ${tmuxName} Enter`);
     }
     startTypingIndicator();
     return true;
